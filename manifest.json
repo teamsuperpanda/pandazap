@@ -1,0 +1,10 @@
+{
+	"id": "pandazap",
+	"name": "Panda Zap",
+	"version": "1.0.0",
+	"minAppVersion": "1.7.2",
+	"description": "Convert Markdown notes into Anki flashcards and sync locally.",
+	"author": "Team Super Panda",
+	"authorUrl": "https://github.com/teamsuperpanda",
+	"isDesktopOnly": true
+}
