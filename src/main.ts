@@ -83,7 +83,7 @@ export default class PandaZapPlugin extends Plugin {
     this.ankiConnector = new AnkiConnector(this.settings, this.app);
     this.cardExtractor = new CardExtractor(this.app, this.settings);
 
-    const cards = await this.extractCardsFromCurrentNote();
+    const cards = this.extractCardsFromCurrentNote();
     const activeFile = this.app.workspace.getActiveFile();
     const notePath = activeFile ? activeFile.path : undefined;
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -93,12 +93,12 @@ export default class PandaZapPlugin extends Plugin {
 
   /**
    * Extracts Q&A cards from the current active note
-   * @returns Promise<AnkiCard[]> Array of extracted cards
+   * @returns AnkiCard[] Array of extracted cards
    */
-  async extractCardsFromCurrentNote(): Promise<AnkiCard[]> {
+  extractCardsFromCurrentNote(): AnkiCard[] {
     // Recreate extractor to pick up any settings changes
     this.cardExtractor = new CardExtractor(this.app, this.settings);
-    return await this.cardExtractor.extractCardsFromCurrentNote();
+    return this.cardExtractor.extractCardsFromCurrentNote();
   }
 
   /**

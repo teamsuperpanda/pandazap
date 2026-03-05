@@ -15,10 +15,10 @@ export class CardExtractor {
 
   /**
    * Extracts Q&A cards from the current active note
-   * @returns Promise<AnkiCard[]> Array of extracted cards
+   * @returns AnkiCard[] Array of extracted cards
    * @throws Error if no active note is found
    */
-  async extractCardsFromCurrentNote(): Promise<AnkiCard[]> {
+  extractCardsFromCurrentNote(): AnkiCard[] {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) {
       new Notice('No active note found');

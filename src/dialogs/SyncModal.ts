@@ -219,7 +219,7 @@ export class SyncModal extends Modal {
 
     // Extract cards first
     try {
-      const cards = await this.plugin.extractCardsFromCurrentNote();
+      const cards = this.plugin.extractCardsFromCurrentNote();
       if (cards.length === 0) {
         const qTag = `${this.plugin.settings.questionWord}:`;
         const aTag = `${this.plugin.settings.answerWord}:`;
