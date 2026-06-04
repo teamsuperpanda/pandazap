@@ -163,42 +163,50 @@ export class AnkiConnector {
     // but are no longer present in the current note and mark them for deletion.
     try {
       if (this.settings.useNoteBased && notePath) {
-        // Find notes in the target deck that have the plugin tag and came from this source file
-        const sourceTag = this.getSourceTag(notePath);
-        const query = `deck:"${deckName}" tag:${PLUGIN_TAG}${sourceTag ? ` tag:${sourceTag}` : ''}`;
-        const existingNoteIds = (await this.ankiConnectRequest(
-          'findNotes',
-          ANKI_CONNECT_VERSION,
-          { query }
-        )) as string[];
-        if (existingNoteIds && existingNoteIds.length > 0) {
-          // Fetch note info to read Front/Back fields
+        // Build a set of extracted questions for quick lookup
+        const extractedQuestions = new Set(cards.map((c) => (c.question || '').trim()));
+
+        const findAndMarkDeletions = async (query: string): Promise<boolean> => {
+          const existingNoteIds = (await this.ankiConnectRequest(
+            'findNotes', ANKI_CONNECT_VERSION, { query }
+          )) as string[];
+          if (!existingNoteIds || existingNoteIds.length === 0) return false;
+
           const notesInfo = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
             notes: existingNoteIds,
           })) as AnkiNoteInfo[];
-          // Build a set of extracted questions for quick lookup (normalized)
-          const extractedQuestions = new Set(cards.map((c) => (c.question || '').trim()));
 
           for (const ni of notesInfo) {
             try {
               const front = ni.fields?.Front?.value?.trim() ?? '';
               const back = ni.fields?.Back?.value?.trim() ?? '';
               if (front && !extractedQuestions.has(front)) {
-                // This card exists in Anki but not in the current note — schedule for deletion
                 const delCard = { question: front, answer: back, line: -1 };
                 const noteId = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
-                const cs: CardSyncInfo = {
+                analysis.cardsToDelete.push({
                   card: delCard,
                   action: CardAction.DELETE,
                   deckName,
                   existingCardId: noteId,
-                };
-                analysis.cardsToDelete.push(cs);
+                });
               }
             } catch {
               // ignore per-note errors
             }
           }
+          return true;
+        };
+
+        // First try: only notes tagged with this source file (v1.0.5+)
+        const sourceTag = this.getSourceTag(notePath);
+        const scopedQuery = `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
+        const found = await findAndMarkDeletions(scopedQuery);
+
+        // Fallback: no source-tagged notes exist yet (pre-v1.0.5 migration).
+        // Use deck-wide query so users can still delete old cards.
+        if (!found) {
+          const fallbackQuery = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
+          await findAndMarkDeletions(fallbackQuery);
         }
       }
     } catch {
