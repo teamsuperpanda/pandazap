@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 - ESLint 10 upgrade
 - Badge now tracks latest release dynamically
 
+## [1.0.4] - 2026-06-03
+- Auto-detect answer content after `Q:` without requiring `A:` prefix
+- Multi-line answers now supported (bullet lists, tables, numbered steps)
+- Answer continues until next `Q:` or end of note
+
 ## [1.0.3] - 2026-06-04
 - Fixed `**Q:**` and `**A:**` (bold labels) not being hidden in reading view
 - Clean up empty wrapper elements after stripping Q/A labels
