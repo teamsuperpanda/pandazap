@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5] - 2026-06-04
+- **Fix:** Multiple notes targeting the same deck no longer delete each other's cards
+- Each note is source-tagged so deletion detection is scoped per-file
+- ESLint 10 upgrade
+- Badge now tracks latest release dynamically
+
 ## [1.0.3] - 2026-06-04
 - Fixed `**Q:**` and `**A:**` (bold labels) not being hidden in reading view
 - Clean up empty wrapper elements after stripping Q/A labels
