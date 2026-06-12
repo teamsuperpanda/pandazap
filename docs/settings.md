@@ -39,8 +39,8 @@ Keep Anki running and reachable at this address while syncing.
 
 - **Note Type**
   - The Anki note type/model used when creating new notes (e.g., `Basic`, `Cloze`). Make sure this matches a model that exists in your Anki collection.
-  - Note Type must be a Basic-style note. The plugin creates and updates notes using two fields named `Front` and `Back`.
-  - Do not select Cloze or other models that do not expose `Front` and `Back` fields - they are not supported and will lead to incorrect notes or sync errors.
+   - The plugin always writes to two fields named `Front` and `Back`. Use a Basic-style note type that has these fields.
+   - Do not select Cloze or other note types that do not expose `Front` and `Back` fields - they will lead to incorrect notes or sync errors.
 
 ### Presentation
 

@@ -57,7 +57,7 @@ Write multiple `Q:` / `A:` pairs in the same note. Each pair becomes a separate 
 Panda Zap determines the target Anki deck using this priority:
 
    1. **Explicit override**  --  If the first line is `Deck::some/deck`, that deck is used. Slashes become Anki's `::` separator. This works regardless of any other setting.
-   2. **Folder‑based**  --  If "Use Note‑Based Decks" is enabled and no override is present, the deck is built from the note's folder path + filename. For example, `Biology/Plants/Photosynthesis.md` → deck `Biology::Plants::Photosynthesis`.
+   2. **Folder‑based**  --  If "Use Note‑Based Decks" is enabled and no override is present, the deck is built from the note's folder path + filename. For example, `Biology/Plants/Photosynthesis.md` → deck `Biology/Plants::Photosynthesis`.
    3. **Default deck**  --  If neither override nor folder‑based naming applies, the plugin falls back to the **Default Deck** setting.
 
 ```
