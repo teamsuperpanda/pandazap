@@ -1,113 +1,279 @@
 # Writing cards
 
-Panda Zap extracts Basic Anki cards from your Markdown notes. This page explains the supported formats and gives examples.
+Panda Zap turns lines in your notes into Anki flashcards. This page shows you exactly how to write them.
 
-Important: Panda Zap supports only Basic (Front/Back) Anki notes. The extractor writes `Front` and `Back` fields and does not generate cloze deletions or map arbitrary fields.
+## Quick start
 
-## Labels and basic rules
+Add a `Q:` and `A:` line anywhere in a note:
 
-- Default labels: `Q:` for question and `A:` for answer. These are configurable in the plugin settings.
- - Labels are case‑insensitive and must be followed by a colon.
- - Avoid placing Q/A pairs inside fenced code blocks or YAML frontmatter. The text extractor operates on the raw note text and does not automatically exclude frontmatter or fenced code; placing Q/A there may produce cards. (The in-document visual processor used for bolding questions during reading mode does try to skip code elements for presentation only.)
-
-## Supported formats
-
-1) Single‑line Q/A
-
-Place both the question and answer on one line.
-
-    ```markdown
-    Q: What is the capital of France? A: Paris
-    ```
-
-    This produces a Basic note with `Front` = "What is the capital of France?" and `Back` = "Paris".
-
-2) Multi‑line answer
-
-Place the `Q:` on one line and the answer on subsequent lines. The answer continues until a blank line or the next `Q:` label. You can use an explicit `A:` line or omit it - any content after `Q:` is treated as the answer. This supports bullet lists, tables, numbered steps, and paragraph text.
-
-    ```markdown
-    Q: What are the types of fruit?
-    - Apple
-    - Banana
-    - Orange
-
-    Q: Conversion rates
-    | From | To | Rate |
-    | --- | --- | --- |
-    | USD | EUR | 0.85 |
-    | EUR | USD | 1.18 |
-    ```
-
-An explicit `A:` (or `I:`) label can still be used to clearly mark the start of the answer:
-
-    ```markdown
-    Q: Explain photosynthesis
-    A:
-    Photosynthesis is the process by which plants convert light energy into chemical energy.
-    It occurs in chloroplasts and involves chlorophyll.
-    ```
-
-3) Multiple cards in one note
-
-Write multiple `Q:` / `A:` pairs in the same note. Each pair becomes a separate Basic card.
-
-4) Deck targeting (priority order)
-
-Panda Zap determines the target Anki deck using this priority:
-
-   1. **Explicit override**  --  If the first line is `Deck::some/deck`, that deck is used. Slashes become Anki's `::` separator. This works regardless of any other setting.
-   2. **Folder‑based**  --  If "Use Note‑Based Decks" is enabled and no override is present, the deck is built from the note's folder path + filename. For example, `Biology/Plants/Photosynthesis.md` → deck `Biology/Plants::Photosynthesis`.
-   3. **Default deck**  --  If neither override nor folder‑based naming applies, the plugin falls back to the **Default Deck** setting.
-
-```
-Deck::Biology/Plants
-Q: What organelle performs photosynthesis? A: Chloroplast
+```markdown
+Q: What is the capital of France? A: Paris
 ```
 
-**Multiple files, same deck**  --  If several notes target the same deck (via `Deck::` or folder path), their cards are merged into one deck. Each file's cards are tracked independently: deleting cards from one file never touches cards from another file that shares the deck.
+Open the note, click the zap icon, and sync. Anki gets a new card:
 
-Setting "Use Note‑Based Decks" off means folder‑based naming is skipped  --  notes go to the Default Deck (unless they have an explicit `Deck::` override).
+```
+Front: What is the capital of France?
+Back:  Paris
+```
 
-5) Small formatting notes
+That is all you need to get started. Keep reading for multi-line answers, images, deck targeting, and more.
 
-- Surrounding `*` or `_` around the `Q:`/`A:` labels is accepted by the extractor (so `*Q:*` or `_A:_` will match). The extractor strips surrounding asterisks/underscores from the captured question/answer text.
-- Leading/trailing whitespace around questions and answers is trimmed.
+## How it works
 
-Note: A `Q:` with no content after it (blank line or end of note) produces no card. If an `A:` line is present but empty, the following non-blank lines are captured as the answer. An image tag (`I:`) alone (without `A:`) also produces a card.
+Panda Zap scans your note for lines that start with `Q:` (question) and `A:` (answer). Everything after `Q:` becomes the front of the card. Everything after `A:` becomes the back.
 
-6) Images
+You can put cards anywhere in the note - they do not need their own section. The plugin finds them all.
 
-You can include images in your cards using the `I:` label. The image will be displayed on the back of the card (Answer side).
-The `A:` (Answer) field is optional if `I:` is present. This allows for "image-only" answers.
+## Single-line cards
 
-Supported formats include:
-- Obsidian internal links: `[[image.png]]` or `![[image.png]]`
-- Markdown links: `![Alt Text](path/to/image.png)`
-- Raw paths/URLs: `path/to/image.png`
+Put the question and answer on the same line:
 
-Example (Text + Image):
-    ```markdown
-    Q: Identify this cell organelle
-    A: Mitochondrion
-    I: [[mitochondrion.jpg]]
-    ```
+```markdown
+Q: What year did WW2 end? A: 1945
+```
 
-Example (Image only):
-    ```markdown
-    Q: What does the UI look like?
-    I: [[screenshot.png]]
-    ```
-    This creates a card with Front "What does the UI look like?" and Back "<img src='screenshot.png'>".
+```markdown
+Q: What is an atom? A: The smallest unit of matter
+```
+
+```markdown
+Q: Who wrote Romeo and Juliet? A: William Shakespeare
+```
+
+Each line above creates one Anki card.
+
+## Multi-line answers
+
+When the answer is longer, put `Q:` on one line and the answer on the lines below. The answer keeps going until a blank line or the next `Q:`.
+
+### Bullet list
+
+```markdown
+Q: What are the three states of matter?
+- Solid
+- Liquid
+- Gas
+```
+
+Result: One card whose back is a bullet list.
+
+### Numbered steps
+
+```markdown
+Q: Steps to boil an egg
+1. Fill pot with water
+2. Bring to a boil
+3. Add egg
+4. Wait 7 minutes
+```
+
+### Table
+
+```markdown
+Q: Common HTML tags
+| Tag     | Purpose       |
+| ------- | ------------- |
+| `<p>`   | Paragraph     |
+| `<a>`   | Link          |
+| `<img>` | Image         |
+```
+
+### Paragraphs
+
+```markdown
+Q: What is photosynthesis?
+Photosynthesis is how plants turn sunlight into energy.
+It happens in the chloroplasts using a pigment called chlorophyll.
+```
+
+### Explicit A: label
+
+You can also write `A:` to mark where the answer starts. This is optional but can make things clearer:
+
+```markdown
+Q: Explain mitosis
+A:
+Mitosis is cell division that produces two identical daughter cells.
+It has four phases: prophase, metaphase, anaphase, and telophase.
+```
+
+## Multiple cards in one note
+
+Just write one card after another. Each `Q:` starts a new card.
+
+```markdown
+Q: Capital of France? A: Paris
+Q: Capital of Japan? A: Tokyo
+Q: Capital of Brazil? A: Brasilia
+```
+
+Blank lines between cards are fine:
+
+```markdown
+Q: What is Python? A: A programming language
+
+Q: What is Flutter? A: A UI toolkit from Google
+
+Q: What is Docker? A: A container platform
+```
+
+## Images on cards
+
+Add an image to the back of a card with `I:`. The image is attached to the answer side.
+
+### Image + text answer
+
+```markdown
+Q: Identify this cell organelle
+A: Mitochondrion
+I: [[mitochondrion.jpg]]
+```
+
+Result: Back shows "Mitochondrion" followed by the image.
+
+### Image-only answer (no text)
+
+```markdown
+Q: What does the UI look like?
+I: [[screenshot.png]]
+```
+
+The `A:` is optional when `I:` is present. The card back contains just the image.
+
+### Supported image formats
+
+Obsidian links:
+
+```markdown
+I: [[diagram.png]]
+I: ![[photo.jpg]]
+```
+
+Markdown syntax:
+
+```markdown
+I: ![Diagram](path/to/diagram.png)
+I: ![Screenshot](assets/screenshot.png "Optional title")
+```
+
+Direct paths and URLs:
+
+```markdown
+I: images/chart.png
+I: https://example.com/diagram.jpg
+```
+
+## Choosing which deck cards go to
+
+By default, cards go to a deck named after your note's folder and filename. You can change this.
+
+### Priority order (first match wins)
+
+| Priority | Method | Example |
+| -------- | ------ | ------- |
+| 1 | First-line override | `Deck::Biology/Plants` on the very first line |
+| 2 | Folder-based (if enabled) | `Biology/Plants/Photosynthesis.md` becomes deck `Biology/Plants::Photosynthesis` |
+| 3 | Default deck setting | The deck you set in plugin settings |
+
+### Deck override on first line
+
+Put `Deck::name` on the first line of your note to send all cards in that note to a specific deck:
+
+```markdown
+Deck::Spanish/Vocab
+Q: Hello A: Hola
+Q: Goodbye A: Adios
+Q: Thank you A: Gracias
+```
+
+Use slashes for nested decks:
+
+```markdown
+Deck::Biology/Cell-Biology
+Q: What is the powerhouse of the cell? A: Mitochondrion
+```
+
+### Multiple notes in the same deck
+
+Several notes can target the same deck. Their cards merge together. Each file's cards are tracked separately - deleting cards from one note never affects cards from another note in the same deck.
+
+```
+Note: Spanish/Vocab.md          Note: Spanish/Greetings.md
+┌─────────────────────────────┐ ┌─────────────────────────────┐
+│ Deck::Spanish/Vocab         │ │ Deck::Spanish/Vocab         │
+│ Q: Hello A: Hola            │ │ Q: Good morning A: Buenos   │
+│ Q: Goodbye A: Adios         │ │     dias                    │
+└─────────────────────────────┘ │ Q: Good night A: Buenas     │
+                                │     noches                  │
+                                └─────────────────────────────┘
+                                      │
+                                      ▼
+                          Deck "Spanish::Vocab" contains:
+                          Hello / Hola
+                          Goodbye / Adios
+                          Good morning / Buenos dias
+                          Good night / Buenas noches
+```
+
+## Formatting notes
+
+- Labels are case-insensitive: `q:`, `Q:`, `q: ` all work.
+- Bold/italic around labels is stripped: `*Q:*`, `_A:_`, `**Q:**` all work.
+- Extra spaces around questions and answers are trimmed.
+- You can use Markdown inside answers: **bold**, *italic*, `code`, links, lists.
+
+```markdown
+Q: What is Panda Zap?
+A: An **Obsidian plugin** that syncs cards to _Anki_.
+   Use it with `Q: and A:` labels.
+```
+
+## What NOT to do
+
+### Do not put cards inside code blocks
+
+```markdown
+Some text...
+
+```markdown
+Q: This will NOT be detected A: It is inside a code block
+```
+
+More text...
+```
+
+Cards inside fenced code blocks or YAML frontmatter are not extracted.
+
+### Do not leave Q: empty
+
+```markdown
+Q:     (nothing here)
+```
+
+A question with no content produces no card.
+
+## Cheatsheet
+
+| Format | Example |
+| ------ | ------- |
+| Single line | `Q: Question A: Answer` |
+| Multi-line | `Q: Question` then answer on next lines |
+| With image | `I: [[image.png]]` |
+| Deck override | `Deck::Name` on first line |
+| Nested deck | `Deck::Subject/Topic` |
+| Bold labels | `*Q:* Question *A:* Answer` |
 
 ## What is not supported
 
-- Cloze deletions or Cloze note types are not supported. Do not expect `{{c1::...}}` style generation.
-- Arbitrary field mappings - the plugin only writes `Front` and `Back`.
+- Cloze deletions (`{{c1::...}}`). Only Basic (Front/Back) notes are supported.
+- Custom field mappings. The plugin always writes to `Front` and `Back`.
+- Multiple note types per note.
 
 ## Tips
 
-- Keep questions focused and answers concise for best Anki results.
-- Use the preview before syncing to verify how notes will look in Anki.
+- Keep questions short and answers clear - this works best for spaced repetition.
+- Use the preview before syncing to check how cards will look in Anki.
+- If a card is missing, check it is not inside a code block or frontmatter.
 
-For troubleshooting and edge cases, see `README.md` and open an issue with a minimal example if something looks wrong.
+For troubleshooting and edge cases, see the main `README.md` or open a GitHub issue with a short example.

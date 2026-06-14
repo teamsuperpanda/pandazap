@@ -1,8 +1,8 @@
 import { PluginSettingTab, App, Setting, Notice } from 'obsidian';
 import PandaZapPlugin from '../main';
 import { DEFAULT_SETTINGS } from '../sync/types';
+import { validationErrors } from '../sync/markers';
 
-// Interface to properly type the TextComponent's inputEl property
 interface TextComponentWithInput {
   inputEl: HTMLInputElement;
 }
@@ -48,7 +48,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Anki connect').setHeading();
 
-    // Restore defaults button for quick reset
     new Setting(containerEl)
       .setName('Restore defaults')
       .setDesc('Restore all settings to default values.')
@@ -88,7 +87,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
           })
       );
 
-    // dynamic description that uses the current deck override word to show an example
     const currentDeckWord =
       this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord;
     const deckSetting = new Setting(containerEl)
@@ -98,7 +96,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
         text
           .setPlaceholder('Deck')
           .setValue(this.plugin.settings.deckOverrideWord)
-          // allow the user to clear the field; we'll enforce defaults on blur
           .onChange((value) => {
             this.plugin.settings.deckOverrideWord = value;
             void this.plugin.saveSettings();
@@ -106,7 +103,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
             if (deckSetting.descEl) deckSetting.descEl.textContent = `Example: ${w}::MyDeck`;
           });
 
-        // restore default if left empty on blur and notify the user
         const inputEl = (text as TextComponentWithInput).inputEl;
         inputEl.addEventListener('blur', () => {
           if (!inputEl.value || !inputEl.value.trim()) {
@@ -115,7 +111,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
             this.plugin.settings.deckOverrideWord = def;
             void this.plugin.saveSettings();
             if (deckSetting.descEl) deckSetting.descEl.textContent = `Example: ${def}::MyDeck`;
-            new Notice('Deck override word cannot be empty — restored to default');
+            new Notice('Deck override word cannot be empty - restored to default');
           }
         });
       });
@@ -128,12 +124,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
         text
           .setPlaceholder('Q')
           .setValue(this.plugin.settings.questionWord)
-          // allow clearing; enforce default on blur
           .onChange((value) => {
-            // save the raw value (can be empty temporarily)
-            this.plugin.settings.questionWord = value;
+            if (!value || !value.trim()) return;
+            this.plugin.settings.questionWord = value.trim();
             void this.plugin.saveSettings();
-            const w = (value && value.trim()) || DEFAULT_SETTINGS.questionWord;
+            const w = value.trim();
             if (questionSetting.descEl)
               questionSetting.descEl.textContent = `Example: ${w}: What is the capital of France?`;
           });
@@ -147,8 +142,9 @@ export class PandaZapSettingTab extends PluginSettingTab {
             void this.plugin.saveSettings();
             if (questionSetting.descEl)
               questionSetting.descEl.textContent = `Example: ${def}: What is the capital of France?`;
-            new Notice('Question word cannot be empty — restored to default');
+            new Notice('Question word cannot be empty - restored to default');
           }
+          showMarkerValidation(this.plugin);
         });
       });
 
@@ -160,11 +156,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
         text
           .setPlaceholder('A')
           .setValue(this.plugin.settings.answerWord)
-          // allow clearing; enforce default on blur
           .onChange((value) => {
-            this.plugin.settings.answerWord = value;
+            if (!value || !value.trim()) return;
+            this.plugin.settings.answerWord = value.trim();
             void this.plugin.saveSettings();
-            const w = (value && value.trim()) || DEFAULT_SETTINGS.answerWord;
+            const w = value.trim();
             if (answerSetting.descEl) answerSetting.descEl.textContent = `Example: ${w}: Paris`;
           });
 
@@ -176,8 +172,9 @@ export class PandaZapSettingTab extends PluginSettingTab {
             this.plugin.settings.answerWord = def;
             void this.plugin.saveSettings();
             if (answerSetting.descEl) answerSetting.descEl.textContent = `Example: ${def}: Paris`;
-            new Notice('Answer word cannot be empty — restored to default');
+            new Notice('Answer word cannot be empty - restored to default');
           }
+          showMarkerValidation(this.plugin);
         });
       });
 
@@ -190,9 +187,10 @@ export class PandaZapSettingTab extends PluginSettingTab {
           .setPlaceholder('I')
           .setValue(this.plugin.settings.imageWord)
           .onChange((value) => {
-            this.plugin.settings.imageWord = value;
+            if (!value || !value.trim()) return;
+            this.plugin.settings.imageWord = value.trim();
             void this.plugin.saveSettings();
-            const w = (value && value.trim()) || DEFAULT_SETTINGS.imageWord;
+            const w = value.trim();
             if (imageSetting.descEl) imageSetting.descEl.textContent = `Example: ${w}: [[my-image.png]]`;
           });
 
@@ -204,8 +202,9 @@ export class PandaZapSettingTab extends PluginSettingTab {
             this.plugin.settings.imageWord = def;
             void this.plugin.saveSettings();
             if (imageSetting.descEl) imageSetting.descEl.textContent = `Example: ${def}: [[my-image.png]]`;
-            new Notice('Image word cannot be empty — restored to default');
+            new Notice('Image word cannot be empty - restored to default');
           }
+          showMarkerValidation(this.plugin);
         });
       });
 
@@ -225,7 +224,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
 
     this.connectionResultEl.className = 'panda-zap-connection-result loading';
     const loadingEl = this.connectionResultEl.createDiv('connection-content');
-    loadingEl.createSpan({ cls: 'connection-icon', text: '⏳' });
+    loadingEl.createSpan({ cls: 'connection-icon', text: 'loading' });
     loadingEl.createSpan({ cls: 'connection-text', text: 'Testing connection...' });
 
     try {
@@ -234,7 +233,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
       if (isConnected) {
         this.connectionResultEl.className = 'panda-zap-connection-result connected';
         const connectedEl = this.connectionResultEl.createDiv('connection-content');
-        connectedEl.createSpan({ cls: 'connection-icon', text: '✅ ' });
+        connectedEl.createSpan({ cls: 'connection-icon', text: 'connected' });
         connectedEl.createSpan({ cls: 'connection-text', text: 'Connected to Anki connect' });
         connectedEl.createSpan({
           cls: 'connection-details',
@@ -243,7 +242,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
       } else {
         this.connectionResultEl.className = 'panda-zap-connection-result disconnected';
         const disconnectedEl = this.connectionResultEl.createDiv('connection-content');
-        disconnectedEl.createSpan({ cls: 'connection-icon', text: '❌ ' });
+        disconnectedEl.createSpan({ cls: 'connection-icon', text: 'disconnected' });
         disconnectedEl.createSpan({
           cls: 'connection-text',
           text: 'Cannot connect to Anki connect',
@@ -257,10 +256,17 @@ export class PandaZapSettingTab extends PluginSettingTab {
       this.connectionResultEl.empty();
       this.connectionResultEl.className = 'panda-zap-connection-result error';
       const errorEl = this.connectionResultEl.createDiv('connection-content');
-      errorEl.createSpan({ cls: 'connection-icon', text: '⚠️ ' });
+      errorEl.createSpan({ cls: 'connection-icon', text: 'error' });
       errorEl.createSpan({ cls: 'connection-text', text: 'Connection error' });
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       errorEl.createSpan({ cls: 'connection-details', text: errorMsg });
     }
+  }
+}
+
+function showMarkerValidation(plugin: PandaZapPlugin): void {
+  const errors = validationErrors(plugin.settings);
+  if (errors.length > 0) {
+    new Notice(errors.join('; '));
   }
 }

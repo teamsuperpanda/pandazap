@@ -1,6 +1,7 @@
 import { App, MarkdownView, Notice } from 'obsidian';
 import { AnkiCard, PandaZapSettings } from './types';
 import { extractQACardsFromText } from './extractionUtils';
+import { normalizeSettings, buildMarkerRegexes } from './markers';
 import { CSS_CLASSES } from '../constants';
 import PandaZapPlugin from '../main';
 
@@ -13,11 +14,6 @@ export class CardExtractor {
     this.settings = settings;
   }
 
-  /**
-   * Extracts Q&A cards from the current active note
-   * @returns AnkiCard[] Array of extracted cards
-   * @throws Error if no active note is found
-   */
   extractCardsFromCurrentNote(): AnkiCard[] {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) {
@@ -28,19 +24,11 @@ export class CardExtractor {
     try {
       const content = activeView.editor.getValue();
       return extractQACardsFromText(content, this.settings);
-    } catch {
+    } catch (e: unknown) {
+      console.warn('PandaZap: error extracting cards from note', e);
       new Notice('Error extracting cards from note');
       return [];
     }
-  }
-
-  /**
-   * Creates regex patterns for Q&A detection
-   */
-  private createQARegex(escQ: string, escA: string, escI?: string): RegExp {
-    const parts = [`([*_]{0,2})${escQ}\\s*`, `([*_]{0,2})${escA}\\s*`];
-    if (escI) parts.push(`([*_]{0,2})${escI}\\s*`);
-    return new RegExp(parts.join('|'), 'gi');
   }
 
   processQACards(element: HTMLElement, plugin?: PandaZapPlugin) {
@@ -52,17 +40,13 @@ export class CardExtractor {
       }
 
       const fullText = container.textContent || '';
-      const qTag = plugin?.settings?.questionWord ?? this.settings.questionWord;
-      const aTag = plugin?.settings?.answerWord ?? this.settings.answerWord;
-      const iTag = plugin?.settings?.imageWord ?? this.settings.imageWord;
-      const escQ = qTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escA = aTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escI = iTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
+      const markers = normalizeSettings(plugin?.settings ?? this.settings);
+      const rx = buildMarkerRegexes(markers);
 
       if (
-        !new RegExp(`[*_]{0,2}${escQ}`).test(fullText) &&
-        !new RegExp(`[*_]{0,2}${escA}`).test(fullText) &&
-        !new RegExp(`[*_]{0,2}${escI}`).test(fullText)
+        !rx.qLabel.test(fullText) &&
+        !rx.aLabel.test(fullText) &&
+        !rx.iLabel.test(fullText)
       ) {
         return;
       }
@@ -82,7 +66,7 @@ export class CardExtractor {
         const textNode = node as Text;
         if (!isInCode(textNode)) {
           const t = textNode.nodeValue ?? '';
-          if (/(?:[*_]{0,2})Q:|(?:[*_]{0,2})A:|(?:[*_]{0,2})I:/i.test(t)) {
+          if (rx.qaTextNode.test(t)) {
             toUpdate.push(textNode);
           }
         }
@@ -95,6 +79,9 @@ export class CardExtractor {
 
       let changed = false;
       let inQuestion = false;
+
+      const qLabelFull = `${markers.questionWord}:`;
+      const aLabelFull = `${markers.answerWord}:`;
 
       const applyTransform = (tn: Text) => {
         const parent = tn.parentNode;
@@ -112,20 +99,21 @@ export class CardExtractor {
           }
         };
 
-        const qaRegex = this.createQARegex(escQ, escA, escI);
+        rx.qaTextNode.lastIndex = 0;
         let lastIndex = 0;
         let match: RegExpExecArray | null;
-        while ((match = qaRegex.exec(text)) !== null) {
+        while ((match = rx.qaTextNode.exec(text)) !== null) {
           if (match.index > lastIndex) {
             appendSegment(text.slice(lastIndex, match.index), inQuestion);
           }
 
-          if (match[0].toUpperCase().includes('Q:')) {
+          const matched = match[0].toUpperCase();
+          if (matched.includes(qLabelFull.toUpperCase())) {
             inQuestion = true;
-          } else if (match[0].toUpperCase().includes('A:')) {
+          } else if (matched.includes(aLabelFull.toUpperCase())) {
             inQuestion = false;
           }
-          lastIndex = qaRegex.lastIndex;
+          lastIndex = rx.qaTextNode.lastIndex;
         }
 
         if (lastIndex < text.length) {
@@ -148,6 +136,7 @@ export class CardExtractor {
         }
       };
 
+      rx.qaTextNode.lastIndex = 0;
       for (const tn of toUpdate) {
         applyTransform(tn);
       }
