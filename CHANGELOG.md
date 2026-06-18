@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - 2026-06-18
+- **Chore:** Dependency refresh -- dev deps bumped, zero audit vulnerabilities
+- **Chore:** Minimum Obsidian version raised to 1.13.0
+- **Refactor:** Settings tab migrated to Obsidian 1.13+ `getSettingDefinitions()` API
+- **Fix:** Lint compliance for current Obsidian plugin rules (`instanceOf`, `window.setTimeout`)
+- **Fix:** Parser now skips YAML frontmatter and fenced code blocks
+- **Fix:** HTTP image downloads re-enabled (scheme restriction relaxed)
+- **Fix:** `findExistingCard` falls back to untagged entries when source tag missing
+- **Perf:** Reuse cached note fields instead of per-card `notesInfo` API calls
+- **Cleanup:** Dead CSS partials removed; `mediaUtils.ts` merged into `imageUtils.ts`
+- **Cleanup:** `NormalizedMarkers`/`normalizeSettings`/`validationErrors` inlined
+- **Cleanup:** JSDoc noise removed, empty esbuild banner dropped
+- **Tests:** 3 new parser tests (YAML frontmatter, fenced code blocks)
+
 ## [1.0.6] - 2026-06-15
 - **Fix:** Deletion now only acts on source-tagged notes - removing the dangerous fallback that could delete cards from other notes sharing a deck (reported issue)
 - **Fix:** Reading-mode DOM processor now uses custom marker names (Q:/A:/I: were hardcoded)

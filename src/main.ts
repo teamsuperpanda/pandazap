@@ -39,16 +39,10 @@ export default class PandaZapPlugin extends Plugin {
     });
   }
 
-  /**
-   * Opens the sync dialog modal
-   */
   openSyncDialog() {
     new SyncModal(this.app, this).open();
   }
 
-  /**
-   * Loads plugin settings from data.json
-   */
   async loadSettings() {
     this.settings = Object.assign(
       {},
@@ -57,27 +51,16 @@ export default class PandaZapPlugin extends Plugin {
     );
   }
 
-  /**
-   * Saves plugin settings to data.json
-   */
   async saveSettings() {
     await this.saveData(this.settings);
   }
 
-  /**
-   * Tests connection to Anki Connect
-   * @returns Promise<boolean> True if connection successful
-   */
   async testAnkiConnection(): Promise<boolean> {
     // Use a fresh connector created from current settings to ensure we use latest values
     const connector = new AnkiConnector(this.settings, this.app);
     return connector.testConnection();
   }
 
-  /**
-   * Analyzes what sync operations need to be performed for the current note
-   * @returns Promise<SyncAnalysis> Analysis of required operations
-   */
   async analyzeSyncOperation(): Promise<SyncAnalysis> {
     // Recreate connector and extractor using current settings so analysis uses latest values
     this.ankiConnector = new AnkiConnector(this.settings, this.app);
@@ -91,23 +74,12 @@ export default class PandaZapPlugin extends Plugin {
     return this.ankiConnector.analyzeSyncOperation(cards, notePath, noteContent);
   }
 
-  /**
-   * Extracts Q&A cards from the current active note
-   * @returns AnkiCard[] Array of extracted cards
-   */
   extractCardsFromCurrentNote(): AnkiCard[] {
     // Recreate extractor to pick up any settings changes
     this.cardExtractor = new CardExtractor(this.app, this.settings);
     return this.cardExtractor.extractCardsFromCurrentNote();
   }
 
-  /**
-   * Syncs cards to Anki
-   * @param cards Array of cards to sync
-   * @param preview Whether this is a preview operation
-   * @param deleteConfirmed Whether delete operations are confirmed
-   * @returns Promise<string[]> Array of result messages
-   */
   async syncCardsToAnki(
     cards: AnkiCard[],
     preview: boolean = false,

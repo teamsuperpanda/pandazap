@@ -2,16 +2,9 @@ import esbuild from "esbuild";
 import process from "process";
 import { builtinModules as builtins } from 'module';
 
-const banner =
-`
-`;
-
 const prod = (process.argv[2] === 'production');
 
 const context = await esbuild.context({
-	banner: {
-		js: banner,
-	},
 	entryPoints: ['src/main.ts'],
 	bundle: true,
 	external: [

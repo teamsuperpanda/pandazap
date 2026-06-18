@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { sanitizeMediaFilename, getImageFilename } from '../src/sync/mediaUtils';
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('obsidian', () => ({}));
+import { sanitizeMediaFilename, getImageFilename } from '../src/sync/imageUtils';
 
 describe('sanitizeMediaFilename', () => {
   it('prepends pandazap prefix with hash', () => {

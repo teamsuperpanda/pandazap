@@ -121,4 +121,38 @@ It was created by Facebook`;
     expect(cards[0].question).toBe('Steps to deploy');
     expect(cards[0].answer).toBe('1. Build the app\n2. Run tests\n3. Deploy to server');
   });
+
+  it('should extract cards after YAML frontmatter', () => {
+    const content = `---
+title: My Notes
+tags: [typescript, programming]
+---
+
+Q: What is TypeScript? A: A typed superset of JavaScript`;
+
+    const cards = extractQACardsFromText(content, defaultSettings);
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('What is TypeScript?');
+  });
+
+  it('should NOT extract cards inside fenced code blocks', () => {
+    const content = '```\nQ: What is inside code? A: This should not be extracted\n```';
+
+    const cards = extractQACardsFromText(content, defaultSettings);
+
+    expect(cards).toHaveLength(0);
+  });
+
+  it('should extract cards after fenced code blocks', () => {
+    const content = `\`\`\`
+const x = 1;
+\`\`\`
+Q: What comes after code? A: This should be extracted`;
+
+    const cards = extractQACardsFromText(content, defaultSettings);
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('What comes after code?');
+  });
 });

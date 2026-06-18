@@ -1,22 +1,6 @@
 import { DEFAULT_SETTINGS } from './types';
 import type { PandaZapSettings } from './types';
 
-export interface NormalizedMarkers {
-  questionWord: string;
-  answerWord: string;
-  imageWord: string;
-}
-
-export function normalizeSettings(
-  settings: PandaZapSettings
-): NormalizedMarkers {
-  return {
-    questionWord: (settings.questionWord || '').trim() || DEFAULT_SETTINGS.questionWord,
-    answerWord: (settings.answerWord || '').trim() || DEFAULT_SETTINGS.answerWord,
-    imageWord: (settings.imageWord || '').trim() || DEFAULT_SETTINGS.imageWord,
-  };
-}
-
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
 }
@@ -34,10 +18,13 @@ export interface MarkerRegexes {
   qaTextNode: RegExp;
 }
 
-export function buildMarkerRegexes(markers: NormalizedMarkers): MarkerRegexes {
-  const escQ = escapeRegex(markers.questionWord);
-  const escA = escapeRegex(markers.answerWord);
-  const escI = escapeRegex(markers.imageWord);
+export function buildMarkerRegexes(settings: PandaZapSettings): MarkerRegexes {
+  const qWord = (settings.questionWord || '').trim() || DEFAULT_SETTINGS.questionWord;
+  const aWord = (settings.answerWord || '').trim() || DEFAULT_SETTINGS.answerWord;
+  const iWord = (settings.imageWord || '').trim() || DEFAULT_SETTINGS.imageWord;
+  const escQ = escapeRegex(qWord);
+  const escA = escapeRegex(aWord);
+  const escI = escapeRegex(iWord);
 
   const qFull = `${escQ}:`;
   const aFull = `${escA}:`;
@@ -65,27 +52,4 @@ export function buildMarkerRegexes(markers: NormalizedMarkers): MarkerRegexes {
   };
 }
 
-export function validationErrors(
-  settings: PandaZapSettings
-): string[] {
-  const errors: string[] = [];
-  const q = (settings.questionWord || '').trim();
-  const a = (settings.answerWord || '').trim();
-  const i = (settings.imageWord || '').trim();
 
-  if (!q && !a && !i) {
-    return errors;
-  }
-
-  if (q && a && q.toLowerCase() === a.toLowerCase()) {
-    errors.push('Question word and answer word must be different.');
-  }
-  if (q && i && q.toLowerCase() === i.toLowerCase()) {
-    errors.push('Question word and image word must be different.');
-  }
-  if (a && i && a.toLowerCase() === i.toLowerCase()) {
-    errors.push('Answer word and image word must be different.');
-  }
-
-  return errors;
-}

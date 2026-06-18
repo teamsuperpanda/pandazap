@@ -1,5 +1,5 @@
 import { AnkiCard, PandaZapSettings } from './types';
-import { normalizeSettings, buildMarkerRegexes } from './markers';
+import { buildMarkerRegexes } from './markers';
 
 function parseImagePath(text: string): string | null {
   if (!text) return null;
@@ -15,7 +15,7 @@ function parseImagePath(text: string): string | null {
     return clean.trim();
   }
 
-  const mdMatch = clean.match(/^!\[.*?\]\((.*?)\)$/);
+  const mdMatch = clean.match(/^!\[.*?\]\(((?:[^()]+|\([^()]*\))*)\)$/);
   if (mdMatch) {
     const dest = mdMatch[1];
     const angleMatch = dest.match(/^<([^>]+)>\s*$/);
@@ -36,7 +36,7 @@ function parseImagePath(text: string): string | null {
     return pipeIndex !== -1 ? inner.substring(0, pipeIndex).trim() : inner.trim();
   }
 
-  const mdFind = clean.match(/!\[.*?\]\((.*?)\)/);
+  const mdFind = clean.match(/!\[.*?\]\(((?:[^()]+|\([^()]*\))*)\)/);
   if (mdFind) {
     const d = mdFind[1];
     const titleSplit = d.match(/^(.*?)\s+(?:"|')(.*)(?:"|')$/);
@@ -54,14 +54,49 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
     return [];
   }
 
-  const markers = normalizeSettings(settings);
-  const rx = buildMarkerRegexes(markers);
+  const rx = buildMarkerRegexes(settings);
 
   const cards: AnkiCard[] = [];
   const lines = content.split('\n');
 
+  const lineState: Array<'normal' | 'frontmatter' | 'fenced'> = [];
+  let inFrontmatter = false;
+  let inFenced = false;
+
+  for (let k = 0; k < lines.length; k++) {
+    const trimmed = lines[k].trim();
+
+    if (k === 0 && trimmed === '---') {
+      inFrontmatter = true;
+      lineState.push('frontmatter');
+      continue;
+    }
+
+    if (inFrontmatter) {
+      if (trimmed === '---') {
+        inFrontmatter = false;
+      }
+      lineState.push('frontmatter');
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      inFenced = !inFenced;
+      lineState.push('fenced');
+      continue;
+    }
+
+    if (inFenced) {
+      lineState.push('fenced');
+      continue;
+    }
+
+    lineState.push('normal');
+  }
+
   try {
     for (let i = 0; i < lines.length; i++) {
+      if (lineState[i] !== 'normal') continue;
       const line = lines[i];
 
       const singleLineAll = new RegExp(
@@ -130,6 +165,7 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
 
           if (nextLine.trim() === '') break;
           if (rx.qStart.test(nextLine)) break;
+          if (lineState[j] !== 'normal') break;
 
           const iMatch = nextLine.match(rx.iStart);
           if (iMatch) {

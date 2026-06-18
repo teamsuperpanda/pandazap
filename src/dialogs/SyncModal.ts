@@ -35,25 +35,17 @@ export class SyncModal extends Modal {
 
     header.createEl('h2', { text: 'Panda zap' });
 
-    const loadingOverlay = contentEl.createDiv('panda-zap-spinner-overlay panda-zap-loading-overlay');
-    const loadingText = loadingOverlay.createDiv('panda-zap-loading-text');
-    loadingText.textContent = 'Loading...';
-
-    await this.checkConnectionAndLoadAnalysis();
-
-    loadingOverlay.remove();
-
+    // Render status and action containers immediately
     const statusContainer = contentEl.createDiv('panda-zap-status-container');
-    this.renderStatus(statusContainer);
     const summaryContainer = contentEl.createDiv('panda-zap-summary');
-    this.renderSyncSummary(summaryContainer);
     const buttonContainer = contentEl.createDiv('panda-zap-button-container');
-    this.renderButtons(buttonContainer);
-    // Create results container (hidden by default)
     contentEl.createDiv('panda-zap-results hidden');
-  }
 
-  private async checkConnectionAndLoadAnalysis() {
+    // Show initial loading state
+    const loadingDiv = statusContainer.createDiv('panda-zap-status-minimal');
+    loadingDiv.createSpan({ text: 'Connecting to Anki...', cls: 'panda-zap-status-text' });
+
+    // Then load data asynchronously
     try {
       this.isConnected = await this.plugin.testAnkiConnection();
       if (this.isConnected) {
@@ -62,6 +54,11 @@ export class SyncModal extends Modal {
     } catch {
       this.isConnected = false;
     }
+
+    // Update UI
+    this.renderStatus(statusContainer);
+    this.renderSyncSummary(summaryContainer);
+    this.renderButtons(buttonContainer);
   }
 
   private renderStatus(statusContainer: HTMLElement) {

@@ -1,8 +1,7 @@
 import { App, MarkdownView, Notice } from 'obsidian';
 import { AnkiCard, PandaZapSettings } from './types';
 import { extractQACardsFromText } from './extractionUtils';
-import { normalizeSettings, buildMarkerRegexes } from './markers';
-import { CSS_CLASSES } from '../constants';
+import { buildMarkerRegexes } from './markers';
 import PandaZapPlugin from '../main';
 
 export class CardExtractor {
@@ -35,13 +34,12 @@ export class CardExtractor {
     const containers = element.querySelectorAll('p, div, span, li');
 
     containers.forEach((container) => {
-      if (!container.instanceOf(HTMLElement) || container.classList.contains(CSS_CLASSES.QA_PROCESSED)) {
+      if (!container.instanceOf(HTMLElement) || container.classList.contains('panda-zap-qa-processed')) {
         return;
       }
 
       const fullText = container.textContent || '';
-      const markers = normalizeSettings(plugin?.settings ?? this.settings);
-      const rx = buildMarkerRegexes(markers);
+      const rx = buildMarkerRegexes(plugin?.settings ?? this.settings);
 
       if (
         !rx.qLabel.test(fullText) &&
@@ -51,12 +49,6 @@ export class CardExtractor {
         return;
       }
 
-      const isInCode = (n: Node): boolean => {
-        if (!n.instanceOf(HTMLElement) && !n.instanceOf(Text)) return false;
-        const el = n.instanceOf(Text) ? n.parentElement : n;
-        return !!el?.closest('code, pre');
-      };
-
       const boldQuestion = plugin?.settings?.boldQuestionInReadingMode ?? true;
 
       const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -64,7 +56,7 @@ export class CardExtractor {
       let node = walker.nextNode();
       while (node) {
         const textNode = node as Text;
-        if (!isInCode(textNode)) {
+        if (!(textNode.parentElement?.closest('code, pre'))) {
           const t = textNode.nodeValue ?? '';
           if (rx.qaTextNode.test(t)) {
             toUpdate.push(textNode);
@@ -80,8 +72,9 @@ export class CardExtractor {
       let changed = false;
       let inQuestion = false;
 
-      const qLabelFull = `${markers.questionWord}:`;
-      const aLabelFull = `${markers.answerWord}:`;
+      const s = plugin?.settings ?? this.settings;
+      const qLabelFull = `${(s.questionWord || '').trim() || 'Q'}:`;
+      const aLabelFull = `${(s.answerWord || '').trim() || 'A'}:`;
 
       const applyTransform = (tn: Text) => {
         const parent = tn.parentNode;
@@ -123,13 +116,13 @@ export class CardExtractor {
         if (frag.textContent !== text) {
           tn.replaceWith(frag);
           changed = true;
-          let el = parent instanceof HTMLElement ? parent : null;
+          let el = parent?.instanceOf(HTMLElement) ? parent : null;
           while (
             el &&
             el.childNodes.length === 0 &&
             !['P', 'DIV', 'LI'].includes(el.tagName)
           ) {
-            const next = el.parentNode instanceof HTMLElement ? el.parentNode : null;
+            const next = el.parentNode?.instanceOf(HTMLElement) ? el.parentNode : null;
             el.remove();
             el = next;
           }
@@ -142,7 +135,7 @@ export class CardExtractor {
       }
 
       if (changed) {
-        container.classList.add(CSS_CLASSES.QA_PROCESSED);
+        container.classList.add('panda-zap-qa-processed');
       }
     });
   }

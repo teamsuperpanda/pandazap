@@ -17,9 +17,7 @@ import {
   getImageFilename,
   sanitizeMediaFilename,
 } from './imageUtils';
-import { normalizeSettings } from './markers';
 
-const SOURCE_TAG_PREFIX = 'source:';
 
 export class AnkiConnector {
   private settings: PandaZapSettings;
@@ -71,10 +69,22 @@ export class AnkiConnector {
 
         if (existingCardId) {
           try {
-            const infoResult = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
-              notes: [existingCardId],
-            })) as AnkiNoteInfo[];
-            const ni = infoResult?.[0];
+            let ni: AnkiNoteInfo | undefined;
+            if (this.noteCache) {
+              for (const entries of this.noteCache.byFront.values()) {
+                const found = entries.find(e => e.noteId === existingCardId);
+                if (found) {
+                  ni = found.raw;
+                  break;
+                }
+              }
+            }
+            if (!ni) {
+              const infoResult = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
+                notes: [existingCardId],
+              })) as AnkiNoteInfo[];
+              ni = infoResult?.[0];
+            }
             const front = (ni?.fields?.Front?.value ?? '').trim();
             const back = (ni?.fields?.Back?.value ?? '').trim();
             const qTrim = (card.question || '').trim();
@@ -145,7 +155,7 @@ export class AnkiConnector {
 
     if (this.settings.useNoteBased && notePath) {
       try {
-        const extractedQuestions = new Set(cards.map((c) => (c.question || '').trim()));
+        const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
         const findAndMarkDeletions = async (query: string): Promise<boolean> => {
           const existingNoteIds = (await this.ankiConnectRequest(
@@ -161,7 +171,7 @@ export class AnkiConnector {
             try {
               const front = ni.fields?.Front?.value?.trim() ?? '';
               const back = ni.fields?.Back?.value?.trim() ?? '';
-              if (front && !extractedQuestions.has(front)) {
+              if (front && !extractedQuestions.has(normalizeField(front))) {
                 const delCard = { question: front, answer: back, line: -1 };
                 const noteId = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
                 analysis.cardsToDelete.push({
@@ -198,6 +208,11 @@ export class AnkiConnector {
         if (entries && entries.length > 0) {
           const sourceTag = notePath ? this.getSourceTag(notePath) : undefined;
           const tagged = sourceTag ? entries.filter((e) => e.raw?.tags?.includes(sourceTag)) : [];
+          if (this.settings.useNoteBased && sourceTag) {
+            if (tagged.length > 0) return tagged[0].noteId ?? null;
+            if (entries.length > 0) return entries[0].noteId ?? null;
+            return null;
+          }
           if (tagged.length > 0) return tagged[0].noteId ?? null;
           return entries[0].noteId ?? null;
         }
@@ -224,8 +239,6 @@ export class AnkiConnector {
 
     const results: string[] = [];
     const deckName = this.getDeckName(notePath, noteContent);
-    const markers = normalizeSettings(this.settings);
-
     if (this.settings.useNoteBased && notePath && !preview) {
       try {
         await this.ankiConnectRequest('createDeck', 6, {
@@ -246,8 +259,10 @@ export class AnkiConnector {
         if (preview) {
           const targetDeck =
             this.settings.useNoteBased && notePath ? deckName : this.settings.defaultDeck;
-          const qTag = `${markers.questionWord}:`;
-          const aTag = `${markers.answerWord}:`;
+          const qWord = (this.settings.questionWord || '').trim() || 'Q';
+          const aWord = (this.settings.answerWord || '').trim() || 'A';
+          const qTag = `${qWord}:`;
+          const aTag = `${aWord}:`;
           const iInfo = card.image ? ` | Image: ${card.image}` : '';
           const aInfo = card.answer ? `${card.answer}` : '(image only)';
 
@@ -429,7 +444,7 @@ export class AnkiConnector {
 
   private async uploadImageToAnki(imagePath: string, notePath: string): Promise<string | null> {
     const source = resolveImageSource(this.app, imagePath, notePath);
-    if (!source) return null;
+    if (!source) throw new Error(`Could not resolve image path: ${imagePath}`);
 
     let base64 = '';
     let filename = '';
@@ -532,18 +547,7 @@ export class AnkiConnector {
 
   private getSourceTag(notePath: string): string {
     const s = notePath.replace(/[/\\]/g, '_').replace(/[\s,]+/g, '_');
-    const prefix = SOURCE_TAG_PREFIX;
-    const maxLen = 80;
-    const tag = `${prefix}${s}`;
-    if (tag.length <= maxLen) return tag;
-    let hash = 0;
-    for (let i = 0; i < s.length; i++) {
-      hash = ((hash << 5) - hash) + s.charCodeAt(i);
-      hash |= 0;
-    }
-    const hashStr = Math.abs(hash).toString(36);
-    const keepLen = maxLen - prefix.length - hashStr.length - 1;
-    return `${prefix}${s.slice(0, keepLen)}_${hashStr}`;
+    return `source:${s}`.slice(0, 80);
   }
 
   private buildAnkiConnectUrl(): string {
@@ -565,7 +569,7 @@ export class AnkiConnector {
   }
 
   private sleep(ms: number) {
-    return new Promise((resolve) => activeWindow.setTimeout(resolve, ms));
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   private async ankiConnectRequest(

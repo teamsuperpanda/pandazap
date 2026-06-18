@@ -1,7 +1,7 @@
-import { PluginSettingTab, App, Setting, Notice } from 'obsidian';
+import { PluginSettingTab, App, Setting, Notice, SettingDefinitionItem } from 'obsidian';
 import PandaZapPlugin from '../main';
 import { DEFAULT_SETTINGS } from '../sync/types';
-import { validationErrors } from '../sync/markers';
+
 
 interface TextComponentWithInput {
   inputEl: HTMLInputElement;
@@ -16,52 +16,108 @@ export class PandaZapSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        type: 'group',
+        heading: 'Sync',
+        items: [
+          {
+            name: 'Use note-based deck organization',
+            desc: 'Create Anki decks based on note location and name. If disabled, uses the default deck below.',
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.useNoteBased).onChange((value) => {
+                  this.plugin.settings.useNoteBased = value;
+                  void this.plugin.saveSettings();
+                })
+              );
+            },
+          },
+          {
+            name: 'Bold question in reading mode',
+            desc: 'When enabled, only the question (not the answer) will be bolded in reading mode; question/answer tags are still removed.',
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle
+                  .setValue(this.plugin.settings.boldQuestionInReadingMode)
+                  .onChange((value) => {
+                    this.plugin.settings.boldQuestionInReadingMode = value;
+                    void this.plugin.saveSettings();
+                  })
+              );
+            },
+          },
+        ],
+      },
+      {
+        type: 'group',
+        heading: 'Anki connect',
+        items: [
+          {
+            name: 'Restore defaults',
+            desc: 'Restore all settings to default values.',
+            render: (setting) => {
+              setting.addButton((button) =>
+                button.setButtonText('Restore defaults').onClick(() => {
+                  this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
+                  void this.plugin.saveSettings().then(() => {
+                    new Notice('Settings restored to defaults');
+                    this.update();
+                  });
+                })
+              );
+            },
+          },
+          {
+            name: 'Anki connect URL',
+            desc: 'The URL where Anki connect is running.',
+            render: (setting) => this.renderAnkiConnectUrlSetting(setting),
+          },
+          {
+            name: 'Anki connect port',
+            desc: 'The port where Anki connect is running.',
+            render: (setting) => this.renderAnkiConnectPortSetting(setting),
+          },
+          {
+            name: 'Deck override word',
+            desc: `Example: ${this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord}::MyDeck`,
+            render: (setting) => this.renderDeckWordSetting(setting),
+          },
+          {
+            name: 'Question word',
+            desc: `Example: ${this.plugin.settings.questionWord || DEFAULT_SETTINGS.questionWord}: What is the capital of France?`,
+            render: (setting) => this.renderQuestionWordSetting(setting),
+          },
+          {
+            name: 'Answer word',
+            desc: `Example: ${this.plugin.settings.answerWord || DEFAULT_SETTINGS.answerWord}: Paris`,
+            render: (setting) => this.renderAnswerWordSetting(setting),
+          },
+          {
+            name: 'Image word',
+            desc: `Example: ${this.plugin.settings.imageWord || DEFAULT_SETTINGS.imageWord}: [[my-image.png]]`,
+            render: (setting) => this.renderImageWordSetting(setting),
+          },
+          {
+            name: 'Test Anki connection',
+            desc: 'Test the connection to Anki connect.',
+            render: (setting) => {
+              setting.addButton((button) =>
+                button.setButtonText('Test connection').onClick(() => {
+                  void this.testConnection();
+                })
+              );
+              this.connectionResultEl = setting.settingEl.createDiv('panda-zap-connection-result');
+            },
+          },
+        ],
+      },
+    ];
+  }
 
-    new Setting(containerEl).setName('Sync').setHeading();
-
-    new Setting(containerEl)
-      .setName('Use note-based deck organization')
-      .setDesc(
-        'Create Anki decks based on note location and name. If disabled, uses the default deck below.'
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.useNoteBased).onChange((value) => {
-          this.plugin.settings.useNoteBased = value;
-          void this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName('Bold question in reading mode')
-      .setDesc(
-        'When enabled, only the question (not the answer) will be bolded in reading mode; question/answer tags are still removed.'
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.boldQuestionInReadingMode).onChange((value) => {
-          this.plugin.settings.boldQuestionInReadingMode = value;
-          void this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl).setName('Anki connect').setHeading();
-
-    new Setting(containerEl)
-      .setName('Restore defaults')
-      .setDesc('Restore all settings to default values.')
-      .addButton((button) =>
-        button.setButtonText('Restore defaults').onClick(() => {
-          this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
-          void this.plugin.saveSettings().then(() => {
-            new Notice('Settings restored to defaults');
-            this.display();
-          });
-        })
-      );
-
-    new Setting(containerEl)
+  private renderAnkiConnectUrlSetting(setting: Setting): void {
+    setting
       .setName('Anki connect URL')
       .setDesc('The URL where Anki connect is running.')
       .addText((text) =>
@@ -73,8 +129,10 @@ export class PandaZapSettingTab extends PluginSettingTab {
             void this.plugin.saveSettings();
           })
       );
+  }
 
-    new Setting(containerEl)
+  private renderAnkiConnectPortSetting(setting: Setting): void {
+    setting
       .setName('Anki connect port')
       .setDesc('The port where Anki connect is running.')
       .addText((text) =>
@@ -86,10 +144,12 @@ export class PandaZapSettingTab extends PluginSettingTab {
             void this.plugin.saveSettings();
           })
       );
+  }
 
+  private renderDeckWordSetting(deckSetting: Setting): void {
     const currentDeckWord =
       this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord;
-    const deckSetting = new Setting(containerEl)
+    deckSetting
       .setName('Deck override word')
       .setDesc(`Example: ${currentDeckWord}::MyDeck`)
       .addText((text) => {
@@ -115,9 +175,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
           }
         });
       });
+  }
 
+  private renderQuestionWordSetting(questionSetting: Setting): void {
     const currentQ = this.plugin.settings.questionWord || DEFAULT_SETTINGS.questionWord;
-    const questionSetting = new Setting(containerEl)
+    questionSetting
       .setName('Question word')
       .setDesc(`Example: ${currentQ}: What is the capital of France?`)
       .addText((text) => {
@@ -147,9 +209,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
           showMarkerValidation(this.plugin);
         });
       });
+  }
 
+  private renderAnswerWordSetting(answerSetting: Setting): void {
     const currentA = this.plugin.settings.answerWord || DEFAULT_SETTINGS.answerWord;
-    const answerSetting = new Setting(containerEl)
+    answerSetting
       .setName('Answer word')
       .setDesc(`Example: ${currentA}: Paris`)
       .addText((text) => {
@@ -177,9 +241,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
           showMarkerValidation(this.plugin);
         });
       });
+  }
 
+  private renderImageWordSetting(imageSetting: Setting): void {
     const currentI = this.plugin.settings.imageWord || DEFAULT_SETTINGS.imageWord;
-    const imageSetting = new Setting(containerEl)
+    imageSetting
       .setName('Image word')
       .setDesc(`Example: ${currentI}: [[my-image.png]]`)
       .addText((text) => {
@@ -207,16 +273,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
           showMarkerValidation(this.plugin);
         });
       });
-
-    new Setting(containerEl)
-      .setName('Test Anki connection')
-      .setDesc('Test the connection to Anki connect.')
-      .addButton((button) =>
-        button.setButtonText('Test connection').onClick(() => {
-          void this.testConnection();
-        })
-      );
-    this.connectionResultEl = containerEl.createDiv('panda-zap-connection-result');
   }
 
   private async testConnection(): Promise<void> {
@@ -265,8 +321,12 @@ export class PandaZapSettingTab extends PluginSettingTab {
 }
 
 function showMarkerValidation(plugin: PandaZapPlugin): void {
-  const errors = validationErrors(plugin.settings);
-  if (errors.length > 0) {
-    new Notice(errors.join('; '));
-  }
+  const q = (plugin.settings.questionWord || '').trim().toLowerCase();
+  const a = (plugin.settings.answerWord || '').trim().toLowerCase();
+  const i = (plugin.settings.imageWord || '').trim().toLowerCase();
+  const errors: string[] = [];
+  if (q && a && q === a) errors.push('Question word and answer word must be different.');
+  if (q && i && q === i) errors.push('Question word and image word must be different.');
+  if (a && i && a === i) errors.push('Answer word and image word must be different.');
+  if (errors.length > 0) new Notice(errors.join('; '));
 }
