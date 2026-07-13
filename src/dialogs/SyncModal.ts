@@ -1,6 +1,6 @@
 import { Modal, App, Notice } from 'obsidian';
 import PandaZapPlugin from '../main';
-import { SyncAnalysis } from '../sync/types';
+import { SyncAnalysis, SyncContext } from '../sync/types';
 import { PreviewModal } from './PreviewModal';
 
 // Interface to properly type the App's setting property
@@ -15,10 +15,13 @@ export class SyncModal extends Modal {
   plugin: PandaZapPlugin;
   private syncAnalysis: SyncAnalysis | null = null;
   private isConnected: boolean = false;
+  private isSyncing: boolean = false;
+  private readonly syncContext: SyncContext;
 
   constructor(app: App, plugin: PandaZapPlugin) {
     super(app);
     this.plugin = plugin;
+    this.syncContext = plugin.captureSyncContext();
   }
 
   async onOpen() {
@@ -49,7 +52,7 @@ export class SyncModal extends Modal {
     try {
       this.isConnected = await this.plugin.testAnkiConnection();
       if (this.isConnected) {
-        this.syncAnalysis = await this.plugin.analyzeSyncOperation();
+        this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
       }
     } catch {
       this.isConnected = false;
@@ -179,6 +182,13 @@ export class SyncModal extends Modal {
   private showDeleteConfirmation(count: number): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const m = new Modal(this.app);
+      let settled = false;
+      const settle = (confirmed: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(confirmed);
+      };
+      m.onClose = () => settle(false);
       // Build content
       m.contentEl.addClass('panda-zap-delete-confirm');
       m.contentEl.createEl('h3', { text: 'Confirm deletion' });
@@ -196,11 +206,11 @@ export class SyncModal extends Modal {
       });
 
       cancel.onclick = () => {
-        resolve(false);
+        settle(false);
         m.close();
       };
       confirm.onclick = () => {
-        resolve(true);
+        settle(true);
         m.close();
       };
 
@@ -209,6 +219,16 @@ export class SyncModal extends Modal {
   }
 
   private async performSync() {
+    if (this.isSyncing) return;
+    this.isSyncing = true;
+    try {
+      await this.performSyncOnce();
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  private async performSyncOnce() {
     if (!this.isConnected) {
       new Notice('Cannot sync: no connection to Anki');
       return;
@@ -216,7 +236,7 @@ export class SyncModal extends Modal {
 
     // Extract cards first
     try {
-      const cards = this.plugin.extractCardsFromCurrentNote();
+      const cards = this.syncContext.cards.map((card) => ({ ...card }));
       if (cards.length === 0) {
         const qTag = `${this.plugin.settings.questionWord}:`;
         const aTag = `${this.plugin.settings.answerWord}:`;
@@ -227,7 +247,7 @@ export class SyncModal extends Modal {
       // If we don't have analysis loaded, try to load it so we can prompt for deletions
       if (!this.syncAnalysis) {
         try {
-          this.syncAnalysis = await this.plugin.analyzeSyncOperation();
+          this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
         } catch {
           // ignore analysis failure — we'll proceed without deletion prompt
         }
@@ -236,6 +256,7 @@ export class SyncModal extends Modal {
       // If there are deletions detected, ask the user to confirm before proceeding.
       // If the user cancels, close the modal and abort the sync entirely.
       let deleteConfirmed = false;
+      let confirmedDeletionIds: readonly string[] | undefined;
       if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
         const userConfirmed = await this.showDeleteConfirmation(
           this.syncAnalysis.cardsToDelete.length
@@ -246,13 +267,16 @@ export class SyncModal extends Modal {
           return;
         }
         deleteConfirmed = true;
+        confirmedDeletionIds = Object.freeze(
+          this.syncAnalysis.cardsToDelete
+            .map((card) => card.existingCardId)
+            .filter((id): id is string => Boolean(id))
+        );
       }
 
       // Hide summary and action buttons now that the user has confirmed (or there were no deletions)
       const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
-      const buttonContainer = this.contentEl.querySelector(
-        '.panda-zap-button-container'
-      );
+      const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
       const resultContainer = this.contentEl.querySelector('.panda-zap-results');
       if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.add('hidden');
       if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.add('hidden');
@@ -266,10 +290,14 @@ export class SyncModal extends Modal {
       }
 
       new Notice('Syncing cards to Anki...');
-      const results = await this.plugin.syncCardsToAnki(cards, false, deleteConfirmed);
-      const finalResultContainer = this.contentEl.querySelector(
-        '.panda-zap-results'
+      const results = await this.plugin.syncCardsToAnki(
+        cards,
+        false,
+        deleteConfirmed,
+        this.syncContext,
+        confirmedDeletionIds
       );
+      const finalResultContainer = this.contentEl.querySelector('.panda-zap-results');
       if (!finalResultContainer?.instanceOf(HTMLElement)) return;
       finalResultContainer.classList.remove('hidden');
       finalResultContainer.classList.add('visible');
@@ -298,7 +326,9 @@ export class SyncModal extends Modal {
           cls: 'panda-zap-section-title',
           text: `Skipped (${skipped.length})`,
         });
-        const skippedList = finalResultContainer.createDiv('panda-zap-results-list panda-zap-skipped-list hidden');
+        const skippedList = finalResultContainer.createDiv(
+          'panda-zap-results-list panda-zap-skipped-list hidden'
+        );
         skipped.forEach((s) => {
           const item = skippedList.createDiv('panda-zap-result-item');
           item.createSpan({ text: s });
@@ -325,7 +355,7 @@ export class SyncModal extends Modal {
         let deletionAnalysis = this.syncAnalysis;
         if (!deletionAnalysis) {
           try {
-            deletionAnalysis = await this.plugin.analyzeSyncOperation();
+            deletionAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
           } catch {
             // ignore — we'll still show the generic deleted summary
           }
@@ -360,12 +390,8 @@ export class SyncModal extends Modal {
     } catch (error: unknown) {
       // restore UI elements so the user can try again
       try {
-        const summaryContainer = this.contentEl.querySelector(
-          '.panda-zap-summary'
-        );
-        const buttonContainer = this.contentEl.querySelector(
-          '.panda-zap-button-container'
-        );
+        const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
+        const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
         if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.remove('hidden');
         if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.remove('hidden');
       } catch {
@@ -380,7 +406,7 @@ export class SyncModal extends Modal {
     this.close();
     const appWithSetting = this.app as AppWithSetting;
     appWithSetting.setting.open();
-    appWithSetting.setting.openTabById('panda-zap');
+    appWithSetting.setting.openTabById(this.plugin.manifest.id);
   }
 
   onClose() {

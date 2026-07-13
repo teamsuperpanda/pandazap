@@ -88,3 +88,75 @@ describe('extractQACardsFromText - empty markers fallback', () => {
     expect(cards[0].image).toBe('img.png');
   });
 });
+
+describe('extractQACardsFromText - marker correctness', () => {
+  it('extracts custom markers containing regular-expression metacharacters', () => {
+    const cards = extractQACardsFromText('[Q.*+?^${}()|]: What? (A)[.*]: Answer', {
+      ...DEFAULT_SETTINGS,
+      questionWord: '[Q.*+?^${}()|]',
+      answerWord: '(A)[.*]',
+    });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('What?');
+    expect(cards[0].answer).toBe('Answer');
+  });
+
+  it('does not treat marker letters inside natural words as labels', () => {
+    const cards = extractQACardsFromText(
+      'FAQ: DATA: Hawaii: prose\nQ: FAQ, DATA, and Hawaii: are words A: Correct',
+      DEFAULT_SETTINGS
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('FAQ, DATA, and Hawaii: are words');
+    expect(cards[0].answer).toBe('Correct');
+  });
+
+  it('preserves underscores and Markdown in questions and answers', () => {
+    const cards = extractQACardsFromText(
+      'Q: **snake_case** and `code_value` A: _answer_value_ with [a_link](target)',
+      DEFAULT_SETTINGS
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('**snake_case** and `code_value`');
+    expect(cards[0].answer).toBe('_answer_value_ with [a_link](target)');
+  });
+
+  it('consumes balanced Markdown wrappers around inline labels only', () => {
+    const cards = extractQACardsFromText(
+      '**Q:** **question_text** __A:__ _answer_text_ *I:* [[image.png]]',
+      DEFAULT_SETTINGS
+    );
+
+    expect(cards).toEqual([
+      {
+        question: '**question_text**',
+        answer: '_answer_text_',
+        image: 'image.png',
+        line: 1,
+      },
+    ]);
+  });
+
+  it('ignores cards in tilde-fenced blocks', () => {
+    const cards = extractQACardsFromText(
+      ['~~~markdown', 'Q: Hidden A: Hidden', '~~~', 'Q: Visible A: Visible'].join('\n'),
+      DEFAULT_SETTINGS
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('Visible');
+  });
+
+  it('does not close a four-backtick fence with three backticks', () => {
+    const cards = extractQACardsFromText(
+      ['````markdown', '```', 'Q: Hidden A: Hidden', '````', 'Q: Visible A: Visible'].join('\n'),
+      DEFAULT_SETTINGS
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].question).toBe('Visible');
+  });
+});

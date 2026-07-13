@@ -3,12 +3,21 @@ import { SyncModal } from './dialogs/SyncModal';
 import { PandaZapSettingTab } from './dialogs/SettingsTab';
 import { AnkiConnector } from './sync/AnkiConnector';
 import { CardExtractor } from './sync/CardExtractor';
-import { PandaZapSettings, DEFAULT_SETTINGS, AnkiCard, SyncAnalysis } from './sync/types';
+import {
+  PandaZapSettings,
+  DEFAULT_SETTINGS,
+  AnkiCard,
+  SyncAnalysis,
+  SyncContext,
+  createSyncContext,
+} from './sync/types';
+import { extractQACardsFromText } from './sync/extractionUtils';
 
 export default class PandaZapPlugin extends Plugin {
   settings: PandaZapSettings;
   private ankiConnector: AnkiConnector;
   private cardExtractor: CardExtractor;
+  private settingsSaveQueue: Promise<void> = Promise.resolve();
 
   async onload() {
     await this.loadSettings();
@@ -16,13 +25,9 @@ export default class PandaZapPlugin extends Plugin {
     this.ankiConnector = new AnkiConnector(this.settings, this.app);
     this.cardExtractor = new CardExtractor(this.app, this.settings);
 
-    this.addRibbonIcon(
-      'zap',
-      'Sync notes to Anki',
-      () => {
-        void this.openSyncDialog();
-      }
-    );
+    this.addRibbonIcon('zap', 'Sync notes to Anki', () => {
+      void this.openSyncDialog();
+    });
 
     this.addCommand({
       id: 'sync',
@@ -51,8 +56,17 @@ export default class PandaZapPlugin extends Plugin {
     );
   }
 
-  async saveSettings() {
-    await this.saveData(this.settings);
+  saveSettings(): Promise<void> {
+    const settingsSnapshot = { ...this.settings };
+    const saveAttempt = this.settingsSaveQueue.then(() => this.saveData(settingsSnapshot));
+
+    // Keep later saves moving after a failure and handle ignored promises from
+    // settings controls. Callers that await this attempt still receive the error.
+    this.settingsSaveQueue = saveAttempt.catch((error: unknown) => {
+      console.error('Failed to save Panda Zap settings', error);
+    });
+
+    return saveAttempt;
   }
 
   async testAnkiConnection(): Promise<boolean> {
@@ -61,17 +75,26 @@ export default class PandaZapPlugin extends Plugin {
     return connector.testConnection();
   }
 
-  async analyzeSyncOperation(): Promise<SyncAnalysis> {
-    // Recreate connector and extractor using current settings so analysis uses latest values
-    this.ankiConnector = new AnkiConnector(this.settings, this.app);
-    this.cardExtractor = new CardExtractor(this.app, this.settings);
-
-    const cards = this.extractCardsFromCurrentNote();
-    const activeFile = this.app.workspace.getActiveFile();
-    const notePath = activeFile ? activeFile.path : undefined;
+  captureSyncContext(): SyncContext {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const noteContent = activeView ? activeView.editor.getValue() : undefined;
-    return this.ankiConnector.analyzeSyncOperation(cards, notePath, noteContent);
+    if (!activeView) return createSyncContext([]);
+
+    const noteContent = activeView.editor.getValue();
+    const notePath = activeView.file?.path;
+    const cards = extractQACardsFromText(noteContent, this.settings);
+    return createSyncContext(cards, notePath, noteContent);
+  }
+
+  async analyzeSyncOperation(context?: SyncContext): Promise<SyncAnalysis> {
+    // Recreate connector using current settings so analysis uses latest values
+    this.ankiConnector = new AnkiConnector(this.settings, this.app);
+
+    const syncContext = context ?? this.captureSyncContext();
+    return this.ankiConnector.analyzeSyncOperation(
+      syncContext.cards.map((card) => ({ ...card })),
+      syncContext.notePath,
+      syncContext.noteContent
+    );
   }
 
   extractCardsFromCurrentNote(): AnkiCard[] {
@@ -83,19 +106,20 @@ export default class PandaZapPlugin extends Plugin {
   async syncCardsToAnki(
     cards: AnkiCard[],
     preview: boolean = false,
-    deleteConfirmed: boolean = false
+    deleteConfirmed: boolean = false,
+    context?: SyncContext,
+    confirmedDeletionIds?: readonly string[]
   ): Promise<string[]> {
     this.ankiConnector = new AnkiConnector(this.settings, this.app);
-    const activeFile = this.app.workspace.getActiveFile();
-    const notePath = activeFile ? activeFile.path : undefined;
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const noteContent = activeView ? activeView.editor.getValue() : undefined;
+    const syncContext = context ?? this.captureSyncContext();
+    const syncCards = context ? syncContext.cards.map((card) => ({ ...card })) : cards;
     return this.ankiConnector.syncCards(
-      cards,
+      syncCards,
       preview,
-      notePath,
-      noteContent,
-      deleteConfirmed
+      syncContext.notePath,
+      syncContext.noteContent,
+      deleteConfirmed,
+      confirmedDeletionIds
     );
   }
 }

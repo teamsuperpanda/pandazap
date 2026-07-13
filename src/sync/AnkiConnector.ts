@@ -14,10 +14,9 @@ import {
   resolveImageSource,
   readImageFileToBase64,
   downloadImageToBase64,
-  getImageFilename,
-  sanitizeMediaFilename,
+  getStoredMediaFilename,
+  getStoredMediaFilenameForSource,
 } from './imageUtils';
-
 
 export class AnkiConnector {
   private settings: PandaZapSettings;
@@ -25,7 +24,6 @@ export class AnkiConnector {
   private noteCache: {
     deckName: string;
     byFront: Map<string, NoteCacheEntry[]>;
-    noteIds: string[];
   } | null = null;
 
   constructor(settings: PandaZapSettings, app: App) {
@@ -36,7 +34,7 @@ export class AnkiConnector {
   async testConnection(): Promise<boolean> {
     try {
       const response = await this.ankiConnectRequest('version', ANKI_CONNECT_VERSION);
-      return response !== null;
+      return typeof response === 'number' && response >= ANKI_CONNECT_VERSION;
     } catch (e: unknown) {
       console.warn('PandaZap: connection test failed', e);
       return false;
@@ -64,74 +62,55 @@ export class AnkiConnector {
     const deckName = this.getDeckName(notePath, noteContent);
 
     for (const card of cards) {
-      try {
-        const existingCardId = await this.findExistingCard(card, deckName, notePath);
+      const existingCardId = await this.findExistingCard(card, deckName, notePath, noteContent);
 
-        if (existingCardId) {
-          try {
-            let ni: AnkiNoteInfo | undefined;
-            if (this.noteCache) {
-              for (const entries of this.noteCache.byFront.values()) {
-                const found = entries.find(e => e.noteId === existingCardId);
-                if (found) {
-                  ni = found.raw;
-                  break;
-                }
+      if (existingCardId) {
+        try {
+          let ni: AnkiNoteInfo | undefined;
+          if (this.noteCache) {
+            for (const entries of this.noteCache.byFront.values()) {
+              const found = entries.find((e) => e.noteId === existingCardId);
+              if (found) {
+                ni = found.raw;
+                break;
               }
             }
-            if (!ni) {
-              const infoResult = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
-                notes: [existingCardId],
-              })) as AnkiNoteInfo[];
-              ni = infoResult?.[0];
-            }
-            const front = (ni?.fields?.Front?.value ?? '').trim();
-            const back = (ni?.fields?.Back?.value ?? '').trim();
-            const qTrim = (card.question || '').trim();
+          }
+          if (!ni) {
+            const infoResult = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
+              notes: [existingCardId],
+            })) as AnkiNoteInfo[];
+            ni = infoResult?.[0];
+            if (!ni) throw new Error(`Anki returned no information for note ${existingCardId}`);
+          }
+          const front = (ni?.fields?.Front?.value ?? '').trim();
+          const back = (ni?.fields?.Back?.value ?? '').trim();
+          const qTrim = (card.question || '').trim();
 
-            let match = false;
+          let match = false;
 
-            if (fieldsMatch(front, qTrim)) {
-              if (card.image) {
-                const filename = getImageFilename(card.image);
-                const encodedFilename = encodeURI(filename);
-                const spaceEncodedFilename = filename.replace(/ /g, '%20');
-                const underscoreFilename = filename.replace(/ /g, '_');
-
-                const hasFilename =
-                  back.includes(filename) ||
-                  back.includes(encodedFilename) ||
-                  back.includes(spaceEncodedFilename) ||
-                  back.includes(underscoreFilename);
-
-                const aTrim = (card.answer || '').trim();
-                const hasAnswer = !aTrim || back.includes(aTrim);
-                const hasImgTag = back.includes('<img');
-
-                if (hasAnswer && hasImgTag && hasFilename) {
-                  match = true;
-                }
-              } else {
-                const aTrim = (card.answer || '').trim();
-                if (fieldsMatch(back, aTrim)) {
-                  match = true;
-                }
-              }
-            }
-
-            if (match) {
-              continue;
+          if (fieldsMatch(front, qTrim)) {
+            if (card.image) {
+              const storedFilename = notePath
+                ? getStoredMediaFilename(this.app, card.image, notePath)
+                : null;
+              const expectedBack = storedFilename
+                ? card.answer
+                  ? `${card.answer}<br><img src="${storedFilename}">`
+                  : `<img src="${storedFilename}">`
+                : card.answer;
+              match = Boolean(storedFilename) && fieldsMatch(back, expectedBack || '');
             } else {
-              const cardSyncInfo: CardSyncInfo = {
-                card,
-                action: CardAction.UPDATE,
-                deckName,
-                existingCardId,
-              };
-              analysis.cardsToUpdate.push(cardSyncInfo);
+              const aTrim = (card.answer || '').trim();
+              if (fieldsMatch(back, aTrim)) {
+                match = true;
+              }
             }
-          } catch (e: unknown) {
-            console.warn('PandaZap: failed to fetch note info for comparison', e);
+          }
+
+          if (match) {
+            continue;
+          } else {
             const cardSyncInfo: CardSyncInfo = {
               card,
               action: CardAction.UPDATE,
@@ -140,88 +119,73 @@ export class AnkiConnector {
             };
             analysis.cardsToUpdate.push(cardSyncInfo);
           }
-        } else {
-          analysis.cardsToAdd.push({ card, action: CardAction.ADD, deckName });
+        } catch (e: unknown) {
+          console.warn('PandaZap: failed to compare note info', e);
+          throw e;
         }
-      } catch (e: unknown) {
-        console.warn('PandaZap: error analyzing card', card.question, e);
-        analysis.cardsToAdd.push({
-          card,
-          action: CardAction.ADD,
-          deckName,
-        });
+      } else {
+        analysis.cardsToAdd.push({ card, action: CardAction.ADD, deckName });
       }
     }
 
     if (this.settings.useNoteBased && notePath) {
-      try {
-        const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
+      const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
-        const findAndMarkDeletions = async (query: string): Promise<boolean> => {
-          const existingNoteIds = (await this.ankiConnectRequest(
-            'findNotes', ANKI_CONNECT_VERSION, { query }
-          )) as string[];
-          if (!existingNoteIds || existingNoteIds.length === 0) return false;
+      const findNotes = async (query: string): Promise<string[]> => {
+        const existingNoteIds = (await this.ankiConnectRequest('findNotes', ANKI_CONNECT_VERSION, {
+          query,
+        })) as string[];
+        if (!Array.isArray(existingNoteIds)) throw new Error('Anki returned invalid note IDs');
+        return existingNoteIds;
+      };
 
-          const notesInfo = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
-            notes: existingNoteIds,
-          })) as AnkiNoteInfo[];
+      const sourceTags = this.getEligibleSourceTags(notePath, deckName, noteContent);
+      const noteIds = new Set<string>();
+      for (const sourceTag of sourceTags) {
+        const query = `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
+        for (const noteId of await findNotes(query)) noteIds.add(noteId);
+      }
 
-          for (const ni of notesInfo) {
-            try {
-              const front = ni.fields?.Front?.value?.trim() ?? '';
-              const back = ni.fields?.Back?.value?.trim() ?? '';
-              if (front && !extractedQuestions.has(normalizeField(front))) {
-                const delCard = { question: front, answer: back, line: -1 };
-                const noteId = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
-                analysis.cardsToDelete.push({
-                  card: delCard,
-                  action: CardAction.DELETE,
-                  deckName,
-                  existingCardId: noteId,
-                });
-              }
-            } catch (e: unknown) {
-              console.warn('PandaZap: error processing note for deletion', e);
+      if (noteIds.size > 0) {
+        const notesInfo = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
+          notes: [...noteIds],
+        })) as AnkiNoteInfo[];
+        if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+
+        for (const ni of notesInfo) {
+          try {
+            if (!ni.tags?.some((tag) => sourceTags.includes(tag))) continue;
+            const front = ni.fields?.Front?.value?.trim() ?? '';
+            const back = ni.fields?.Back?.value?.trim() ?? '';
+            if (front && !extractedQuestions.has(normalizeField(front))) {
+              const delCard = { question: front, answer: back, line: -1 };
+              const noteId = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
+              analysis.cardsToDelete.push({
+                card: delCard,
+                action: CardAction.DELETE,
+                deckName,
+                existingCardId: noteId,
+              });
             }
+          } catch (e: unknown) {
+            console.warn('PandaZap: error processing note for deletion', e);
           }
-          return true;
-        };
-
-        const sourceTag = this.getSourceTag(notePath);
-        const scopedQuery = `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
-        await findAndMarkDeletions(scopedQuery);
-      } catch (e: unknown) {
-        console.warn('PandaZap: deletion detection failed', e);
+        }
       }
     }
 
     return analysis;
   }
 
-  private async findExistingCard(card: AnkiCard, deckName: string, notePath?: string): Promise<string | null> {
-    try {
-      await this.prefetchNotesForDeck(deckName);
-      if (this.noteCache?.byFront) {
-        const key = normalizeField(card.question || '');
-        const entries = this.noteCache.byFront.get(key);
-        if (entries && entries.length > 0) {
-          const sourceTag = notePath ? this.getSourceTag(notePath) : undefined;
-          const tagged = sourceTag ? entries.filter((e) => e.raw?.tags?.includes(sourceTag)) : [];
-          if (this.settings.useNoteBased && sourceTag) {
-            if (tagged.length > 0) return tagged[0].noteId ?? null;
-            if (entries.length > 0) return entries[0].noteId ?? null;
-            return null;
-          }
-          if (tagged.length > 0) return tagged[0].noteId ?? null;
-          return entries[0].noteId ?? null;
-        }
-      }
-      return null;
-    } catch (e: unknown) {
-      console.warn('PandaZap: findExistingCard failed', e);
-      return null;
-    }
+  private async findExistingCard(
+    card: AnkiCard,
+    deckName: string,
+    notePath?: string,
+    noteContent?: string
+  ): Promise<string | null> {
+    await this.prefetchNotesForDeck(deckName);
+    const entry = this.selectCacheEntry(card, notePath, deckName, noteContent);
+    return entry?.noteId ?? null;
   }
 
   async syncCards(
@@ -229,7 +193,8 @@ export class AnkiConnector {
     preview: boolean = false,
     notePath?: string,
     noteContent?: string,
-    deleteConfirmed: boolean = false
+    deleteConfirmed: boolean = false,
+    confirmedDeletionIds?: readonly string[]
   ): Promise<string[]> {
     if (!(await this.testConnection())) {
       throw new Error(
@@ -278,16 +243,23 @@ export class AnkiConnector {
                 if (finalBack) {
                   finalBack += `<br><img src="${storedFilename}">`;
                 } else {
-                   finalBack = `<img src="${storedFilename}">`;
+                  finalBack = `<img src="${storedFilename}">`;
                 }
               }
             } catch (e: unknown) {
               const msg = e instanceof Error ? e.message : 'Unknown error';
               results.push(`Image failed (${card.image}): ${msg}`);
+              continue;
             }
           }
 
-          const updateStatus = await this.updateExistingCard(card, deckName, finalBack, notePath);
+          const updateStatus = await this.updateExistingCard(
+            card,
+            deckName,
+            finalBack,
+            notePath,
+            noteContent
+          );
 
           if (updateStatus.status === 'updated') {
             results.push(`Updated: ${card.question} -> ${deckName}`);
@@ -303,7 +275,11 @@ export class AnkiConnector {
                     Front: card.question,
                     Back: finalBack,
                   },
-                  tags: ['panda-zap', 'obsidian', ...(notePath ? [this.getSourceTag(notePath)] : [])],
+                  tags: [
+                    'panda-zap',
+                    'obsidian',
+                    ...(notePath ? [this.getSourceTag(notePath)] : []),
+                  ],
                 },
               });
               results.push(`Added: ${card.question} -> ${deckName}`);
@@ -325,10 +301,11 @@ export class AnkiConnector {
 
     if (!preview && deleteConfirmed && this.settings.useNoteBased && notePath) {
       try {
-        const analysis = await this.analyzeSyncOperation(cards, notePath, noteContent);
-        const toDelete = analysis.cardsToDelete
-          .map((d) => d.existingCardId)
-          .filter((id): id is string => Boolean(id));
+        const toDelete = confirmedDeletionIds
+          ? [...new Set(confirmedDeletionIds.filter(Boolean))]
+          : (await this.analyzeSyncOperation(cards, notePath, noteContent)).cardsToDelete
+              .map((d) => d.existingCardId)
+              .filter((id): id is string => Boolean(id));
         if (toDelete.length > 0) {
           await this.ankiConnectRequest('deleteNotes', 6, { notes: toDelete });
           results.push(`Deleted ${toDelete.length} notes from Anki`);
@@ -346,100 +323,92 @@ export class AnkiConnector {
     card: AnkiCard,
     deckName: string,
     backContentOverride?: string,
-    notePath?: string
+    notePath?: string,
+    noteContent?: string
   ): Promise<{ status: 'updated' | 'identical' | 'missing' }> {
-    try {
-      await this.prefetchNotesForDeck(deckName);
-      let noteId: string | undefined;
-      if (this.noteCache?.byFront) {
-        const key = normalizeField(card.question || '');
-        const entries = this.noteCache.byFront.get(key);
-        if (entries && entries.length > 0) {
-          const sourceTag = notePath ? this.getSourceTag(notePath) : undefined;
-          const tagged = sourceTag ? entries.filter((e) => e.raw?.tags?.includes(sourceTag)) : [];
-          noteId = tagged.length > 0 ? tagged[0].noteId : entries[0].noteId;
+    await this.prefetchNotesForDeck(deckName);
+    const cached = this.selectCacheEntry(card, notePath, deckName, noteContent);
+    const noteId = cached?.noteId;
+
+    const targetBack = backContentOverride !== undefined ? backContentOverride : card.answer;
+
+    if (noteId) {
+      let isIdentical = false;
+      try {
+        const front = (cached?.fields?.Front?.value ?? '').trim();
+        const back = (cached?.fields?.Back?.value ?? '').trim();
+        const qTrim = (card.question || '').trim();
+        const aTrim = (targetBack || '').trim();
+
+        if (fieldsMatch(front, qTrim)) {
+          if (fieldsMatch(back, aTrim)) {
+            isIdentical = true;
+          }
         }
+      } catch (e: unknown) {
+        console.warn('PandaZap: failed to compare cached note fields', e);
       }
 
-      const targetBack = backContentOverride !== undefined ? backContentOverride : card.answer;
+      if (isIdentical) {
+        await this.ensureSourceTag(noteId, cached, notePath);
+        return { status: 'identical' };
+      }
 
-      if (noteId) {
-        const entries = this.noteCache?.byFront.get(normalizeField(card.question || ''));
-        const cached = entries?.[0];
-        try {
-          const front = (cached?.fields?.Front?.value ?? '').trim();
-          const back = (cached?.fields?.Back?.value ?? '').trim();
-          const qTrim = (card.question || '').trim();
-          const aTrim = (targetBack || '').trim();
-
-          let isIdentical = false;
-
-          if (fieldsMatch(front, qTrim)) {
-             if (card.image) {
-                const filename = getImageFilename(card.image);
-                const encodedFilename = encodeURI(filename);
-                const spaceEncodedFilename = filename.replace(/ /g, '%20');
-                const underscoreFilename = filename.replace(/ /g, '_');
-
-                const hasFilename =
-                  back.includes(filename) ||
-                  back.includes(encodedFilename) ||
-                  back.includes(spaceEncodedFilename) ||
-                  back.includes(underscoreFilename);
-
-                const textPart = card.answer ? card.answer.trim() : '';
-                const hasAnswer = !textPart || back.includes(textPart);
-                const hasImgTag = back.includes('<img');
-
-                if (hasAnswer && hasImgTag && hasFilename) {
-                  isIdentical = true;
-                }
-             } else {
-                 if (fieldsMatch(back, aTrim)) {
-                     isIdentical = true;
-                 }
-             }
-          }
-
-          if (isIdentical) {
-            return { status: 'identical' };
-          }
-        } catch (e: unknown) {
-          console.warn('PandaZap: failed to compare cached note fields', e);
-        }
-
-        await this.ankiConnectRequest('updateNoteFields', 6, {
-          note: {
-            id: noteId,
-            fields: {
-              Front: card.question,
-              Back: targetBack,
-            },
+      await this.ankiConnectRequest('updateNoteFields', 6, {
+        note: {
+          id: noteId,
+          fields: {
+            Front: card.question,
+            Back: targetBack,
           },
-        });
-        if (notePath && cached?.raw?.tags) {
-          const sourceTag = this.getSourceTag(notePath);
-          if (!cached.raw.tags.includes(sourceTag)) {
-            try {
-              const allTags = [...new Set([...(cached.raw.tags ?? []), sourceTag])];
-              await this.ankiConnectRequest('updateNoteTags', 6, {
-                note: parseInt(noteId, 10),
-                tags: allTags,
-              });
-            } catch (e: unknown) {
-              console.warn('PandaZap: failed to update note tags', e);
-            }
-          }
-        }
-        this.noteCache = null;
-        return { status: 'updated' };
-      }
-
-      return { status: 'missing' };
-    } catch (e: unknown) {
-      console.warn('PandaZap: updateExistingCard failed', e);
-      return { status: 'missing' };
+        },
+      });
+      await this.ensureSourceTag(noteId, cached, notePath);
+      this.noteCache = null;
+      return { status: 'updated' };
     }
+
+    return { status: 'missing' };
+  }
+
+  private selectCacheEntry(
+    card: AnkiCard,
+    notePath?: string,
+    deckName?: string,
+    noteContent?: string
+  ): NoteCacheEntry | undefined {
+    const entries = this.noteCache?.byFront.get(normalizeField(card.question || ''));
+    if (!entries?.length) return undefined;
+
+    if (notePath) {
+      const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
+      const exact = entries.find((entry) => entry.raw.tags?.includes(sourceTag));
+      if (exact) return exact;
+      if (this.canUseLegacySourceTag(notePath, deckName, noteContent)) {
+        const legacy = entries.find((entry) => entry.raw.tags?.includes(legacySourceTag));
+        if (legacy) return legacy;
+      }
+      if (this.settings.useNoteBased) return undefined;
+    }
+
+    if (this.settings.useNoteBased) return undefined;
+    return entries[0];
+  }
+
+  private async ensureSourceTag(
+    noteId: string,
+    cached: NoteCacheEntry,
+    notePath?: string
+  ): Promise<void> {
+    if (!notePath) return;
+    const sourceTag = this.getSourceTag(notePath);
+    if (cached.raw.tags?.includes(sourceTag)) return;
+
+    const allTags = [...new Set([...(cached.raw.tags ?? []), sourceTag])];
+    await this.ankiConnectRequest('updateNoteTags', 6, {
+      note: parseInt(noteId, 10),
+      tags: allTags,
+    });
   }
 
   private async uploadImageToAnki(imagePath: string, notePath: string): Promise<string | null> {
@@ -447,19 +416,15 @@ export class AnkiConnector {
     if (!source) throw new Error(`Could not resolve image path: ${imagePath}`);
 
     let base64 = '';
-    let filename = '';
-
     if (typeof source === 'string') {
       base64 = await downloadImageToBase64(source);
-      filename = getImageFilename(source);
     } else if (source instanceof TFile) {
       base64 = await readImageFileToBase64(this.app, source);
-      filename = source.name || getImageFilename(source.path);
     } else {
       return null;
     }
 
-    const safeFilename = sanitizeMediaFilename(filename, notePath);
+    const safeFilename = getStoredMediaFilenameForSource(source, notePath);
 
     const result = (await this.ankiConnectRequest('storeMediaFile', 6, {
       filename: safeFilename,
@@ -470,46 +435,40 @@ export class AnkiConnector {
 
   private async prefetchNotesForDeck(deckName: string): Promise<void> {
     if (this.noteCache && this.noteCache.deckName === deckName) return;
-    this.noteCache = { deckName, byFront: new Map(), noteIds: [] };
+    const noteCache = { deckName, byFront: new Map<string, NoteCacheEntry[]>() };
+    const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
+    const noteIds = (await this.ankiConnectRequest('findNotes', 6, { query })) as string[];
+    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
 
-    try {
-      const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
-      let noteIds: string[] = [];
-      try {
-        noteIds = (await this.ankiConnectRequest('findNotes', 6, { query })) as string[];
-      } catch (e: unknown) {
-        console.warn('PandaZap: prefetch tag-scoped query failed', e);
-      }
-
-      if (!noteIds || noteIds.length === 0) {
-        return;
-      }
-
-      const notesInfo = (await this.ankiConnectRequest('notesInfo', 6, { notes: noteIds })) as AnkiNoteInfo[];
-      if (!notesInfo || !Array.isArray(notesInfo)) return;
-
-      for (const ni of notesInfo) {
-        try {
-          const frontValue = ni.fields?.Front?.value ?? '';
-          const front = frontValue.trim();
-          const key = normalizeField(front);
-          const id = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
-          this.noteCache.noteIds.push(id);
-          const entry: NoteCacheEntry = { noteId: id, fields: ni.fields, raw: ni };
-          const existing = this.noteCache.byFront.get(key);
-          if (existing) {
-            existing.push(entry);
-          } else {
-            this.noteCache.byFront.set(key, [entry]);
-          }
-        } catch (e: unknown) {
-          console.warn('PandaZap: error caching note', e);
-        }
-      }
-    } catch (e: unknown) {
-      console.warn('PandaZap: prefetchNotesForDeck failed', e);
-      this.noteCache = null;
+    if (!noteIds || noteIds.length === 0) {
+      this.noteCache = noteCache;
+      return;
     }
+
+    const notesInfo = (await this.ankiConnectRequest('notesInfo', 6, {
+      notes: noteIds,
+    })) as AnkiNoteInfo[];
+    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+
+    for (const ni of notesInfo) {
+      try {
+        const frontValue = ni.fields?.Front?.value ?? '';
+        const front = frontValue.trim();
+        const key = normalizeField(front);
+        const id = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
+        if (!id) continue;
+        const entry: NoteCacheEntry = { noteId: id, fields: ni.fields, raw: ni };
+        const existing = noteCache.byFront.get(key);
+        if (existing) {
+          existing.push(entry);
+        } else {
+          noteCache.byFront.set(key, [entry]);
+        }
+      } catch (e: unknown) {
+        console.warn('PandaZap: error caching note', e);
+      }
+    }
+    this.noteCache = noteCache;
   }
 
   private getDeckNameFromPath(notePath?: string): string {
@@ -528,15 +487,8 @@ export class AnkiConnector {
   }
 
   private getDeckName(notePath?: string, noteContent?: string): string {
-    if (noteContent && this.settings.deckOverrideWord) {
-      const firstLine = noteContent.split(/\r?\n/)[0] || '';
-      const esc = this.settings.deckOverrideWord.replace(/[.*+?^${}(|[\]\\]/g, '\\$&');
-      const prefRegex = new RegExp(`^${esc}::\\s*(.+)$`, 'i');
-      const m = firstLine.match(prefRegex);
-      if (m?.[1]) {
-        return m[1].trim().replace(/\//g, '::');
-      }
-    }
+    const deckOverride = this.getDeckOverride(noteContent);
+    if (deckOverride) return deckOverride;
 
     if (!this.settings.useNoteBased || !notePath) {
       return this.settings.defaultDeck;
@@ -546,8 +498,60 @@ export class AnkiConnector {
   }
 
   private getSourceTag(notePath: string): string {
+    const legacyTag = this.getLegacySourceTag(notePath);
+    const hash = stableHash(notePath.replace(/\\/g, '/'));
+    return `${legacyTag.slice(0, 80 - hash.length - 1)}_${hash}`;
+  }
+
+  private getLegacySourceTag(notePath: string): string {
     const s = notePath.replace(/[/\\]/g, '_').replace(/[\s,]+/g, '_');
     return `source:${s}`.slice(0, 80);
+  }
+
+  private getSourceTags(notePath: string): [string, string] {
+    return [this.getSourceTag(notePath), this.getLegacySourceTag(notePath)];
+  }
+
+  private getEligibleSourceTags(
+    notePath: string,
+    deckName: string,
+    noteContent?: string
+  ): string[] {
+    const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
+    return this.canUseLegacySourceTag(notePath, deckName, noteContent)
+      ? [sourceTag, legacySourceTag]
+      : [sourceTag];
+  }
+
+  /**
+   * A legacy tag can be truncated before the unique part of a long path. It is
+   * therefore only authoritative when the note's path also determines a unique
+   * deck. A deck override can place multiple source notes in one shared deck.
+   */
+  private canUseLegacySourceTag(
+    notePath: string,
+    deckName?: string,
+    noteContent?: string
+  ): boolean {
+    if (!this.settings.useNoteBased) return false;
+    if (this.isLegacySourceTagLossless(notePath)) return true;
+    return (
+      Boolean(deckName && deckName === this.getDeckNameFromPath(notePath)) &&
+      !this.getDeckOverride(noteContent)
+    );
+  }
+
+  private isLegacySourceTagLossless(notePath: string): boolean {
+    const normalized = notePath.replace(/[/\\]/g, '_').replace(/[\s,]+/g, '_');
+    return `source:${normalized}`.length <= 80;
+  }
+
+  private getDeckOverride(noteContent?: string): string | undefined {
+    if (!noteContent || !this.settings.deckOverrideWord) return undefined;
+    const firstLine = noteContent.split(/\r?\n/)[0] || '';
+    const esc = this.settings.deckOverrideWord.replace(/[.*+?^${}(|[\]\\]/g, '\\$&');
+    const match = firstLine.match(new RegExp(`^${esc}::\\s*(.+)$`, 'i'));
+    return match?.[1]?.trim().replace(/\//g, '::') || undefined;
   }
 
   private buildAnkiConnectUrl(): string {
@@ -592,7 +596,19 @@ export class AnkiConnector {
           throw: false,
         });
 
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`Anki Connect HTTP ${response.status}`);
+        }
         const data = response.json as AnkiConnectResponse;
+        if (
+          !data ||
+          typeof data !== 'object' ||
+          !Object.prototype.hasOwnProperty.call(data, 'result') ||
+          !Object.prototype.hasOwnProperty.call(data, 'error') ||
+          (data.error !== null && typeof data.error !== 'string')
+        ) {
+          throw new Error('Invalid response from Anki Connect');
+        }
         if (data.error) {
           throw new Error(data.error);
         }
@@ -617,6 +633,15 @@ export class AnkiConnector {
 
 function normalizeField(s: string): string {
   return (s || '').toString().trim();
+}
+
+function stableHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).padStart(7, '0');
 }
 
 function normalizeHtmlField(value: string): string {

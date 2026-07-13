@@ -1,6 +1,6 @@
 {
   "name": "panda-zap",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "module",
   "description": "Obsidian plugin with Anki Connect integration by Team Super Panda",
   "main": "main.js",
@@ -9,13 +9,17 @@
     "url": "https://github.com/teamsuperpanda/pandazap"
   },
   "homepage": "https://github.com/teamsuperpanda/pandazap",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "dev": "node esbuild.config.mjs --watch",
     "test": "vitest",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "Team Super Panda",

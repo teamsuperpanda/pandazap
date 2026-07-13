@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.8] - 2026-07-13
+- More reliable syncing, including safer matching when cards have similar content across different notes.
+- Safer deletion checks so changes stay tied to the note that started the sync.
+- Better card marker handling, with improved support for Markdown formatting and fenced code blocks.
+- Safer image handling, including clearer limits and more reliable image names.
+- More reliable settings saving when several options are changed quickly.
+- Updated dependencies and compatibility with current supported development tools.
+
 ## [1.0.7] - 2026-06-18
 - **Chore:** Dependency refresh -- dev deps bumped, zero audit vulnerabilities
 - **Chore:** Minimum Obsidian version raised to 1.13.0
@@ -66,4 +74,3 @@ All notable changes to this project will be documented in this file.
   - Note-based deck organization and optional deck override
   - Basic duplicate detection and update flow
 - Desktop-only (requires Anki + AnkiConnect running locally)
-

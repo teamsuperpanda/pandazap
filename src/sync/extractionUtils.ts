@@ -58,10 +58,28 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
 
   const cards: AnkiCard[] = [];
   const lines = content.split('\n');
+  const boundary = '(?<!\\S)';
+  const singleLineAll = new RegExp(
+    `${boundary}${rx.qMarker}\\s*(.+?)\\s*${boundary}${rx.aMarker}\\s*(.+?)\\s*${boundary}${rx.iMarker}\\s*(.+)`,
+    'i'
+  );
+  const singleLineQI = new RegExp(
+    `${boundary}${rx.qMarker}\\s*(.+?)\\s*${boundary}${rx.iMarker}\\s*(.+)`,
+    'i'
+  );
+  const singleLineQA = new RegExp(
+    `${boundary}${rx.qMarker}\\s*(.+?)\\s*${boundary}${rx.aMarker}\\s*(.+)`,
+    'i'
+  );
+  const aLabelAtEnd = new RegExp(`\\s+${rx.aMarker}\\s*$`, 'i');
+  const iLabelAtEnd = new RegExp(`\\s+${rx.iMarker}\\s*$`, 'i');
+  const openingFencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
   const lineState: Array<'normal' | 'frontmatter' | 'fenced'> = [];
   let inFrontmatter = false;
-  let inFenced = false;
+  let fenceCharacter: '`' | '~' | null = null;
+  let fenceLength = 0;
+  let closingFence: RegExp | null = null;
 
   for (let k = 0; k < lines.length; k++) {
     const trimmed = lines[k].trim();
@@ -80,13 +98,23 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       continue;
     }
 
-    if (trimmed.startsWith('```')) {
-      inFenced = !inFenced;
+    if (fenceCharacter) {
       lineState.push('fenced');
+      if (closingFence?.test(lines[k])) {
+        fenceCharacter = null;
+        fenceLength = 0;
+        closingFence = null;
+      }
       continue;
     }
 
-    if (inFenced) {
+    const openingFence = lines[k].match(openingFencePattern);
+    if (openingFence && (openingFence[1][0] === '~' || !openingFence[2].includes('`'))) {
+      fenceCharacter = openingFence[1][0] as '`' | '~';
+      fenceLength = openingFence[1].length;
+      closingFence = new RegExp(
+        `^ {0,3}${fenceCharacter === '`' ? '`' : '~'}{${fenceLength},}\\s*$`
+      );
       lineState.push('fenced');
       continue;
     }
@@ -99,30 +127,22 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       if (lineState[i] !== 'normal') continue;
       const line = lines[i];
 
-      const singleLineAll = new RegExp(
-        `(?:[*_]{0,2})${rx.qFull}\\s*(.+?)\\s*(?:[*_]{0,2})${rx.aFull}\\s*(.+?)\\s*(?:[*_]{0,2})${rx.iFull}\\s*(.+)`,
-        'i'
-      );
       const matchAll = line.match(singleLineAll);
       if (matchAll) {
         cards.push({
-          question: matchAll[1].replace(/[*_]+/g, '').trim(),
-          answer: matchAll[2].replace(/[*_]+/g, '').trim(),
+          question: matchAll[1].trim(),
+          answer: matchAll[2].trim(),
           image: parseImagePath(matchAll[3]) || undefined,
           line: i + 1,
         });
         continue;
       }
 
-      const singleLineQI = new RegExp(
-        `(?:[*_]{0,2})${rx.qFull}\\s*(.+?)\\s*(?:[*_]{0,2})${rx.iFull}\\s*(.+)`,
-        'i'
-      );
       const matchQI = line.match(singleLineQI);
       if (matchQI) {
         if (!rx.aLabel.test(matchQI[1])) {
           cards.push({
-            question: matchQI[1].replace(/[*_]+/g, '').trim(),
+            question: matchQI[1].trim(),
             answer: '',
             image: parseImagePath(matchQI[2]) || undefined,
             line: i + 1,
@@ -131,17 +151,13 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
         }
       }
 
-      const singleLineQA = new RegExp(
-        `(?:[*_]{0,2})${rx.qFull}\\s*(.+?)\\s*(?:[*_]{0,2})${rx.aFull}\\s*(.+)`,
-        'i'
-      );
       const matchQA = line.match(singleLineQA);
       if (matchQA) {
         const possibleAnswer = matchQA[2];
         if (!rx.iLabel.test(possibleAnswer)) {
           cards.push({
-            question: matchQA[1].replace(/[*_]+/g, '').trim(),
-            answer: possibleAnswer.replace(/[*_]+/g, '').trim(),
+            question: matchQA[1].trim(),
+            answer: possibleAnswer.trim(),
             line: i + 1,
           });
           continue;
@@ -150,9 +166,7 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
 
       const qMatch = line.match(rx.qStart);
       if (qMatch) {
-        const aLabelRegex = new RegExp(`\\s*(?:[*_]{0,2})${rx.aFull}\\s*$`, 'i');
-        const iLabelRegex = new RegExp(`\\s*(?:[*_]{0,2})${rx.iFull}\\s*$`, 'i');
-        const questionText = qMatch[1].replace(aLabelRegex, '').replace(iLabelRegex, '').trim();
+        const questionText = qMatch[1].replace(aLabelAtEnd, '').replace(iLabelAtEnd, '').trim();
         const answerLines: string[] = [];
         let imagePath: string | undefined = undefined;
         let hasAnswer = false;
@@ -203,7 +217,7 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
 
         if (hasAnswer || imagePath) {
           cards.push({
-            question: questionText.replace(/[*_]+/g, '').trim(),
+            question: questionText,
             answer: answerLines.join('\n').trim(),
             image: imagePath || undefined,
             line: i + 1,

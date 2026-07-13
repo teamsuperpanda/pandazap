@@ -2,13 +2,16 @@ import { DEFAULT_SETTINGS } from './types';
 import type { PandaZapSettings } from './types';
 
 export function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export interface MarkerRegexes {
   qFull: string;
   aFull: string;
   iFull: string;
+  qMarker: string;
+  aMarker: string;
+  iMarker: string;
   qLabel: RegExp;
   aLabel: RegExp;
   iLabel: RegExp;
@@ -30,26 +33,29 @@ export function buildMarkerRegexes(settings: PandaZapSettings): MarkerRegexes {
   const aFull = `${escA}:`;
   const iFull = `${escI}:`;
 
-  const optBold = '(?:[*_]{0,2})';
+  const wrappedMarker = (marker: string): string =>
+    `(?:\\*\\*${marker}(?:\\*\\*)?|__${marker}(?:__)?|\\*${marker}(?:\\*)?|_${marker}(?:_)?|${marker})`;
+  const qMarker = wrappedMarker(qFull);
+  const aMarker = wrappedMarker(aFull);
+  const iMarker = wrappedMarker(iFull);
+  const boundary = '(?<!\\S)';
 
   return {
     qFull,
     aFull,
     iFull,
+    qMarker,
+    aMarker,
+    iMarker,
 
-    qLabel: new RegExp(`${optBold}${qFull}`, 'i'),
-    aLabel: new RegExp(`${optBold}${aFull}`, 'i'),
-    iLabel: new RegExp(`${optBold}${iFull}`, 'i'),
+    qLabel: new RegExp(`${boundary}${qMarker}`, 'i'),
+    aLabel: new RegExp(`${boundary}${aMarker}`, 'i'),
+    iLabel: new RegExp(`${boundary}${iMarker}`, 'i'),
 
-    qStart: new RegExp(`^${optBold}${qFull}\\s*(.+)`, 'i'),
-    aStart: new RegExp(`^${optBold}${aFull}\\s*(.*)`, 'i'),
-    iStart: new RegExp(`^${optBold}${iFull}\\s*(.*)`, 'i'),
+    qStart: new RegExp(`^${qMarker}\\s*(.+)`, 'i'),
+    aStart: new RegExp(`^${aMarker}\\s*(.*)`, 'i'),
+    iStart: new RegExp(`^${iMarker}\\s*(.*)`, 'i'),
 
-    qaTextNode: new RegExp(
-      `${optBold}${qFull}|${optBold}${aFull}|${optBold}${iFull}`,
-      'gi'
-    ),
+    qaTextNode: new RegExp(`${boundary}(?:${qMarker}|${aMarker}|${iMarker})`, 'gi'),
   };
 }
-
-

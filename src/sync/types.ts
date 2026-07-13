@@ -70,6 +70,26 @@ export interface SyncAnalysis {
   totalCards: number;
 }
 
+/** A point-in-time snapshot of the note used for one analysis/sync flow. */
+export interface SyncContext {
+  readonly cards: readonly AnkiCard[];
+  readonly notePath?: string;
+  readonly noteContent?: string;
+}
+
+export function createSyncContext(
+  cards: readonly AnkiCard[],
+  notePath?: string,
+  noteContent?: string
+): SyncContext {
+  const cardSnapshot = cards.map((card) => Object.freeze({ ...card }));
+  return Object.freeze({
+    cards: Object.freeze(cardSnapshot),
+    notePath,
+    noteContent,
+  });
+}
+
 export const DEFAULT_SETTINGS: PandaZapSettings = {
   ankiConnectUrl: ANKI_CONNECT_DEFAULT_URL,
   ankiConnectPort: ANKI_CONNECT_DEFAULT_PORT,

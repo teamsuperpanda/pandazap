@@ -1,17 +1,31 @@
 import { App, TFile, requestUrl } from 'obsidian';
 
-function shortHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    hash = ((hash << 5) - hash) + s.charCodeAt(i);
-    hash |= 0;
+function stableHash(value: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
   }
-  return Math.abs(hash).toString(36);
+  return `${(first >>> 0).toString(36).padStart(7, '0')}${(second >>> 0)
+    .toString(36)
+    .padStart(7, '0')}`;
 }
 
-export function sanitizeMediaFilename(filename: string, notePath: string): string {
-  const base = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const h = shortHash(notePath);
+export function sanitizeMediaFilename(
+  filename: string,
+  notePath: string,
+  sourceIdentity?: string
+): string {
+  const base = (filename || 'image.png').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const normalizedNotePath = notePath.replace(/\\/g, '/');
+  const normalizedSource = sourceIdentity?.replace(/\\/g, '/');
+  const h = stableHash(
+    normalizedSource === undefined
+      ? normalizedNotePath
+      : `${normalizedNotePath}\0${normalizedSource}`
+  );
   const dotIdx = base.lastIndexOf('.');
   if (dotIdx > 0) {
     const name = base.substring(0, dotIdx);
@@ -37,6 +51,14 @@ export function getImageFilename(pathOrUrl: string): string {
 const MAX_DOWNLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SCHEMES = ['http:', 'https:'];
 
+function isHttpUrl(value: string): boolean {
+  try {
+    return ALLOWED_SCHEMES.includes(new URL(value).protocol.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export function resolveImageSource(
   app: App,
   imagePath: string,
@@ -44,7 +66,7 @@ export function resolveImageSource(
 ): TFile | string | null {
   if (!imagePath) return null;
 
-  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+  if (isHttpUrl(imagePath)) {
     return imagePath;
   }
 
@@ -52,7 +74,31 @@ export function resolveImageSource(
   return file;
 }
 
+export function getStoredMediaFilename(
+  app: App,
+  imagePath: string,
+  notePath: string
+): string | null {
+  const source = resolveImageSource(app, imagePath, notePath);
+  if (!source) return null;
+
+  return getStoredMediaFilenameForSource(source, notePath);
+}
+
+export function getStoredMediaFilenameForSource(source: TFile | string, notePath: string): string {
+  if (typeof source === 'string') {
+    return sanitizeMediaFilename(getImageFilename(source), notePath, source);
+  }
+
+  const filename = source.name || getImageFilename(source.path);
+  return sanitizeMediaFilename(filename, notePath, source.path);
+}
+
 export async function readImageFileToBase64(app: App, file: TFile): Promise<string> {
+  if (file.stat?.size > MAX_DOWNLOAD_SIZE_BYTES) {
+    throw new Error(`Image too large (${file.stat.size} bytes, max ${MAX_DOWNLOAD_SIZE_BYTES})`);
+  }
+
   try {
     const arrayBuffer = await app.vault.readBinary(file);
     return arrayBufferToBase64(arrayBuffer);
@@ -102,5 +148,3 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   }
   return btoa(binary);
 }
-
-

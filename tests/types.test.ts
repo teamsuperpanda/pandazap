@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_SETTINGS, CardAction } from '../src/sync/types';
+import { DEFAULT_SETTINGS, CardAction, createSyncContext } from '../src/sync/types';
 
 describe('Types and Constants', () => {
   describe('DEFAULT_SETTINGS', () => {
@@ -32,6 +32,25 @@ describe('Types and Constants', () => {
       expect(CardAction.ADD).toBe('add');
       expect(CardAction.UPDATE).toBe('update');
       expect(CardAction.DELETE).toBe('delete');
+    });
+  });
+
+  describe('createSyncContext', () => {
+    it('takes an immutable point-in-time copy of cards and note data', () => {
+      const cards = [{ question: 'Q', answer: 'A', line: 3 }];
+      const context = createSyncContext(cards, 'first.md', 'Q: Q\nA: A');
+
+      cards[0].question = 'changed';
+      cards.push({ question: 'later', answer: 'later', line: 4 });
+
+      expect(context).toEqual({
+        cards: [{ question: 'Q', answer: 'A', line: 3 }],
+        notePath: 'first.md',
+        noteContent: 'Q: Q\nA: A',
+      });
+      expect(Object.isFrozen(context)).toBe(true);
+      expect(Object.isFrozen(context.cards)).toBe(true);
+      expect(Object.isFrozen(context.cards[0])).toBe(true);
     });
   });
 });

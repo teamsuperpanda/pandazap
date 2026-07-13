@@ -24,12 +24,13 @@ describe('buildMarkerRegexes', () => {
   });
 
   it('builds qaTextNode regex matching custom markers', () => {
-    const mk = () => buildMarkerRegexes({
-      ...DEFAULT_SETTINGS,
-      questionWord: 'Question',
-      answerWord: 'Answer',
-      imageWord: 'Image',
-    });
+    const mk = () =>
+      buildMarkerRegexes({
+        ...DEFAULT_SETTINGS,
+        questionWord: 'Question',
+        answerWord: 'Answer',
+        imageWord: 'Image',
+      });
     expect(mk().qaTextNode.test('Question: What?')).toBe(true);
     expect(mk().qaTextNode.test('Answer: That.')).toBe(true);
     expect(mk().qaTextNode.test('Image: img.png')).toBe(true);
@@ -41,5 +42,37 @@ describe('buildMarkerRegexes', () => {
     expect(rx.qLabel.test('*Q: test')).toBe(true);
     expect(rx.qLabel.test('_Q: test')).toBe(true);
     expect(rx.qStart.test('*Q: what?')).toBeTruthy();
+  });
+
+  it('escapes every regular-expression metacharacter in custom markers', () => {
+    for (const marker of ['.', '*', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']) {
+      const rx = buildMarkerRegexes({
+        ...DEFAULT_SETTINGS,
+        questionWord: marker,
+        answerWord: marker,
+        imageWord: marker,
+      });
+
+      expect(rx.qStart.test(`${marker}: exact`), marker).toBe(true);
+      expect(rx.aStart.test(`${marker}: exact`), marker).toBe(true);
+      expect(rx.iStart.test(`${marker}: exact`), marker).toBe(true);
+    }
+  });
+
+  it('requires a start or whitespace boundary before labels', () => {
+    const rx = buildMarkerRegexes(DEFAULT_SETTINGS);
+
+    expect(rx.qLabel.test('FAQ: prose')).toBe(false);
+    expect(rx.aLabel.test('DATA: prose')).toBe(false);
+    expect(rx.iLabel.test('Hawaii: prose')).toBe(false);
+    expect(rx.qLabel.test('Text Q: actual marker')).toBe(true);
+  });
+
+  it('matches and consumes balanced Markdown wrappers around labels', () => {
+    const rx = buildMarkerRegexes(DEFAULT_SETTINGS);
+
+    expect('**Q:** question'.match(rx.qStart)?.[1]).toBe('question');
+    expect('__A:__ answer'.match(rx.aStart)?.[1]).toBe('answer');
+    expect('*I:* image.png'.match(rx.iStart)?.[1]).toBe('image.png');
   });
 });

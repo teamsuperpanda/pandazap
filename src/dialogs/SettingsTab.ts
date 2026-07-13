@@ -2,7 +2,6 @@ import { PluginSettingTab, App, Setting, Notice, SettingDefinitionItem } from 'o
 import PandaZapPlugin from '../main';
 import { DEFAULT_SETTINGS } from '../sync/types';
 
-
 interface TextComponentWithInput {
   inputEl: HTMLInputElement;
 }
@@ -61,10 +60,13 @@ export class PandaZapSettingTab extends PluginSettingTab {
               setting.addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(() => {
                   this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
-                  void this.plugin.saveSettings().then(() => {
-                    new Notice('Settings restored to defaults');
-                    this.update();
-                  });
+                  void this.plugin
+                    .saveSettings()
+                    .then(() => {
+                      new Notice('Settings restored to defaults');
+                      this.update();
+                    })
+                    .catch(() => undefined);
                 })
               );
             },
@@ -257,7 +259,8 @@ export class PandaZapSettingTab extends PluginSettingTab {
             this.plugin.settings.imageWord = value.trim();
             void this.plugin.saveSettings();
             const w = value.trim();
-            if (imageSetting.descEl) imageSetting.descEl.textContent = `Example: ${w}: [[my-image.png]]`;
+            if (imageSetting.descEl)
+              imageSetting.descEl.textContent = `Example: ${w}: [[my-image.png]]`;
           });
 
         const inputEl = (text as TextComponentWithInput).inputEl;
@@ -267,7 +270,8 @@ export class PandaZapSettingTab extends PluginSettingTab {
             text.setValue(def);
             this.plugin.settings.imageWord = def;
             void this.plugin.saveSettings();
-            if (imageSetting.descEl) imageSetting.descEl.textContent = `Example: ${def}: [[my-image.png]]`;
+            if (imageSetting.descEl)
+              imageSetting.descEl.textContent = `Example: ${def}: [[my-image.png]]`;
             new Notice('Image word cannot be empty - restored to default');
           }
           showMarkerValidation(this.plugin);
