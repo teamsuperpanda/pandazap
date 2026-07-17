@@ -105,10 +105,7 @@ export interface BatchSyncContext {
 export function createBatchSyncContext(contexts: Map<string, SyncContext>): BatchSyncContext {
   const frozenContexts = new Map(contexts);
   const notePaths = [...frozenContexts.keys()];
-  const totalCards = [...frozenContexts.values()].reduce(
-    (sum, ctx) => sum + ctx.cards.length,
-    0
-  );
+  const totalCards = [...frozenContexts.values()].reduce((sum, ctx) => sum + ctx.cards.length, 0);
   return Object.freeze({
     contexts: frozenContexts,
     notePaths,

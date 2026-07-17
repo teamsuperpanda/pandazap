@@ -381,14 +381,9 @@ export class SyncModal extends Modal {
 
     await this.hideUiAndSync(
       async () =>
-        this.plugin.syncBatchCards(
-          bContext,
-          false,
-          deleteConfirmed,
-          confirmedDeletionIdsByNote
-        ),
-        bContext.totalCards,
-        deleteConfirmed
+        this.plugin.syncBatchCards(bContext, false, deleteConfirmed, confirmedDeletionIdsByNote),
+      bContext.totalCards,
+      deleteConfirmed
     );
   }
 
@@ -464,9 +459,8 @@ export class SyncModal extends Modal {
     }
 
     // Show deletion details if deletions were actually performed
-    const deletionSucceeded = deleteConfirmed && results.some(
-      (r) => /deleted\s+\d+\s+notes/i.test(r)
-    );
+    const deletionSucceeded =
+      deleteConfirmed && results.some((r) => /deleted\s+\d+\s+notes/i.test(r));
     if (deletionSucceeded && this.syncAnalysis?.cardsToDelete.length) {
       const deletedSection = finalResultContainer.createDiv('panda-zap-deleted-section');
       deletedSection.createEl('h4', {

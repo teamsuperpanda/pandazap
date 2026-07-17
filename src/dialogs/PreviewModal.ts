@@ -77,7 +77,9 @@ export class PreviewModal extends Modal {
     cards.forEach((cardInfo, index) => {
       const cardElement = cardsContainer.createDiv(`panda-zap-card ${type}`);
 
-      const cardHeader = cardElement.createDiv('panda-zap-card-header panda-zap-card-header-stacked');
+      const cardHeader = cardElement.createDiv(
+        'panda-zap-card-header panda-zap-card-header-stacked'
+      );
       cardHeader.createSpan({ text: `Card ${index + 1}`, cls: 'panda-zap-card-number' });
       cardHeader.createSpan({ text: `Deck: ${cardInfo.deckName}`, cls: 'panda-zap-card-deck' });
       if (cardInfo.notePath && this.noteLabels) {

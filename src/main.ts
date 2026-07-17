@@ -181,7 +181,12 @@ export default class PandaZapPlugin extends Plugin {
       allCardsToDelete.push(...analysis.cardsToDelete);
     }
 
-    return { cardsToAdd: allCardsToAdd, cardsToUpdate: allCardsToUpdate, cardsToDelete: allCardsToDelete, totalCards };
+    return {
+      cardsToAdd: allCardsToAdd,
+      cardsToUpdate: allCardsToUpdate,
+      cardsToDelete: allCardsToDelete,
+      totalCards,
+    };
   }
 
   async syncBatchCards(
