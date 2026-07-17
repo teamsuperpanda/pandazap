@@ -1,16 +1,18 @@
 import { App, TFile, requestUrl } from 'obsidian';
+import { stableHash } from './hashUtils';
 
-function stableHash(value: string): string {
-  let first = 0x811c9dc5;
+/**
+ * Dual FNV-like hash producing a 14-character base-36 string.
+ * More collision-resistant than the 7-character stableHash, used for
+ * media filenames where uniqueness across paths matters.
+ */
+function mediaFileHash(value: string): string {
   let second = 0x9e3779b9;
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i);
-    first = Math.imul(first ^ code, 0x01000193);
     second = Math.imul(second ^ code, 0x85ebca6b);
   }
-  return `${(first >>> 0).toString(36).padStart(7, '0')}${(second >>> 0)
-    .toString(36)
-    .padStart(7, '0')}`;
+  return `${stableHash(value)}${(second >>> 0).toString(36).padStart(7, '0')}`;
 }
 
 export function sanitizeMediaFilename(
@@ -21,7 +23,7 @@ export function sanitizeMediaFilename(
   const base = (filename || 'image.png').replace(/[^a-zA-Z0-9._-]/g, '_');
   const normalizedNotePath = notePath.replace(/\\/g, '/');
   const normalizedSource = sourceIdentity?.replace(/\\/g, '/');
-  const h = stableHash(
+  const h = mediaFileHash(
     normalizedSource === undefined
       ? normalizedNotePath
       : `${normalizedNotePath}\0${normalizedSource}`

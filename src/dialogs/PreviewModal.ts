@@ -4,11 +4,18 @@ import { SyncAnalysis, CardSyncInfo, PandaZapSettings } from '../sync/types';
 export class PreviewModal extends Modal {
   private syncAnalysis: SyncAnalysis;
   private settings: PandaZapSettings;
+  private noteLabels?: Map<string, string>;
 
-  constructor(app: App, syncAnalysis: SyncAnalysis, settings: PandaZapSettings) {
+  constructor(
+    app: App,
+    syncAnalysis: SyncAnalysis,
+    settings: PandaZapSettings,
+    noteLabels?: Map<string, string>
+  ) {
     super(app);
     this.syncAnalysis = syncAnalysis;
     this.settings = settings;
+    this.noteLabels = noteLabels;
   }
 
   onOpen() {
@@ -73,6 +80,12 @@ export class PreviewModal extends Modal {
       const cardHeader = cardElement.createDiv('panda-zap-card-header panda-zap-card-header-stacked');
       cardHeader.createSpan({ text: `Card ${index + 1}`, cls: 'panda-zap-card-number' });
       cardHeader.createSpan({ text: `Deck: ${cardInfo.deckName}`, cls: 'panda-zap-card-deck' });
+      if (cardInfo.notePath && this.noteLabels) {
+        const label = this.noteLabels.get(cardInfo.notePath);
+        if (label) {
+          cardHeader.createSpan({ text: `Note: ${label}`, cls: 'panda-zap-card-note' });
+        }
+      }
 
       const cardContent = cardElement.createDiv('panda-zap-card-content');
       const questionDiv = cardContent.createDiv('panda-zap-card-question');

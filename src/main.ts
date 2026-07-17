@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView } from 'obsidian';
+import { Plugin, MarkdownView, TFile } from 'obsidian';
 import { SyncModal } from './dialogs/SyncModal';
 import { PandaZapSettingTab } from './dialogs/SettingsTab';
 import { AnkiConnector } from './sync/AnkiConnector';
@@ -9,7 +9,10 @@ import {
   AnkiCard,
   SyncAnalysis,
   SyncContext,
+  CardSyncInfo,
+  BatchSyncContext,
   createSyncContext,
+  createBatchSyncContext,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
 
@@ -37,6 +40,14 @@ export default class PandaZapPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'sync-selected-notes',
+      name: 'Sync selected notes to Anki',
+      callback: () => {
+        void this.handleSyncSelectedNotes();
+      },
+    });
+
     this.addSettingTab(new PandaZapSettingTab(this.app, this));
 
     this.registerMarkdownPostProcessor((element, _context) => {
@@ -46,6 +57,53 @@ export default class PandaZapPlugin extends Plugin {
 
   openSyncDialog() {
     new SyncModal(this.app, this).open();
+  }
+
+  async openBatchSyncDialog(notePaths: string[]): Promise<void> {
+    const bContext = await this.captureBatchSyncContext(notePaths);
+    if (bContext.contexts.size === 0) {
+      new (await import('obsidian')).Notice('No markdown notes with cards found');
+      return;
+    }
+    new SyncModal(this.app, this, bContext).open();
+  }
+
+  private getSelectedNotePaths(): string[] {
+    // Try FileExplorer view's getSelectedFiles API
+    const leaves = this.app.workspace.getLeavesOfType('file-explorer');
+    for (const leaf of leaves) {
+      const view = leaf.view as unknown as { getSelectedFiles?: () => unknown };
+      if (typeof view.getSelectedFiles === 'function') {
+        const selected: unknown = view.getSelectedFiles();
+        if (selected instanceof Set) {
+          return [...selected]
+            .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
+            .map((f) => f.path);
+        }
+        if (Array.isArray(selected)) {
+          return selected
+            .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
+            .map((f) => f.path);
+        }
+      }
+    }
+
+    // DOM fallback: query highlighted file items
+    const paths: string[] = [];
+    document.querySelectorAll('.nav-file.is-selected').forEach((el) => {
+      const path = el.getAttribute('data-path');
+      if (path && path.endsWith('.md')) paths.push(path);
+    });
+    return paths;
+  }
+
+  private async handleSyncSelectedNotes(): Promise<void> {
+    const paths = this.getSelectedNotePaths();
+    if (paths.length > 0) {
+      await this.openBatchSyncDialog(paths);
+    } else {
+      new (await import('obsidian')).Notice('No files selected in file explorer');
+    }
   }
 
   async loadSettings() {
@@ -70,9 +128,8 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   async testAnkiConnection(): Promise<boolean> {
-    // Use a fresh connector created from current settings to ensure we use latest values
-    const connector = new AnkiConnector(this.settings, this.app);
-    return connector.testConnection();
+    this.ankiConnector.updateSettings(this.settings);
+    return this.ankiConnector.testConnection();
   }
 
   captureSyncContext(): SyncContext {
@@ -85,9 +142,74 @@ export default class PandaZapPlugin extends Plugin {
     return createSyncContext(cards, notePath, noteContent);
   }
 
+  async captureBatchSyncContext(notePaths: string[]): Promise<BatchSyncContext> {
+    const contexts = new Map<string, SyncContext>();
+    for (const path of notePaths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      const content = await this.app.vault.read(file);
+      const cards = extractQACardsFromText(content, this.settings);
+      if (cards.length === 0) continue;
+      contexts.set(path, createSyncContext(cards, path, content));
+    }
+    return createBatchSyncContext(contexts);
+  }
+
+  async analyzeBatchSyncOperation(bContext: BatchSyncContext): Promise<SyncAnalysis> {
+    this.ankiConnector.updateSettings(this.settings);
+    const allCardsToAdd: CardSyncInfo[] = [];
+    const allCardsToUpdate: CardSyncInfo[] = [];
+    const allCardsToDelete: CardSyncInfo[] = [];
+    let totalCards = 0;
+
+    for (const [notePath, context] of bContext.contexts) {
+      const analysis = await this.ankiConnector.analyzeSyncOperation(
+        [...context.cards],
+        context.notePath,
+        context.noteContent
+      );
+      totalCards += analysis.totalCards;
+      const tag = (items: CardSyncInfo[]) =>
+        items.forEach((info) => {
+          info.notePath = notePath;
+        });
+      tag(analysis.cardsToAdd);
+      tag(analysis.cardsToUpdate);
+      tag(analysis.cardsToDelete);
+      allCardsToAdd.push(...analysis.cardsToAdd);
+      allCardsToUpdate.push(...analysis.cardsToUpdate);
+      allCardsToDelete.push(...analysis.cardsToDelete);
+    }
+
+    return { cardsToAdd: allCardsToAdd, cardsToUpdate: allCardsToUpdate, cardsToDelete: allCardsToDelete, totalCards };
+  }
+
+  async syncBatchCards(
+    bContext: BatchSyncContext,
+    preview: boolean = false,
+    deleteConfirmed: boolean = false,
+    confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>
+  ): Promise<string[]> {
+    this.ankiConnector.updateSettings(this.settings);
+    const results: string[] = [];
+
+    for (const [notePath, context] of bContext.contexts) {
+      const noteResults = await this.ankiConnector.syncCards(
+        [...context.cards],
+        preview,
+        notePath,
+        context.noteContent,
+        deleteConfirmed,
+        confirmedDeletionIdsByNote?.get(notePath)
+      );
+      results.push(...noteResults);
+    }
+
+    return results;
+  }
+
   async analyzeSyncOperation(context?: SyncContext): Promise<SyncAnalysis> {
-    // Recreate connector using current settings so analysis uses latest values
-    this.ankiConnector = new AnkiConnector(this.settings, this.app);
+    this.ankiConnector.updateSettings(this.settings);
 
     const syncContext = context ?? this.captureSyncContext();
     return this.ankiConnector.analyzeSyncOperation(
@@ -110,7 +232,7 @@ export default class PandaZapPlugin extends Plugin {
     context?: SyncContext,
     confirmedDeletionIds?: readonly string[]
   ): Promise<string[]> {
-    this.ankiConnector = new AnkiConnector(this.settings, this.app);
+    this.ankiConnector.updateSettings(this.settings);
     const syncContext = context ?? this.captureSyncContext();
     const syncCards = context ? syncContext.cards.map((card) => ({ ...card })) : cards;
     return this.ankiConnector.syncCards(

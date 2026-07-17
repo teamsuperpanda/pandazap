@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-07-18
+- **Feat:** Batch sync - select multiple notes in the file explorer and sync them all at once via "Panda Zap: Sync selected notes to Anki"
+- **Feat:** Note type setting now exposed in plugin settings UI
+- **Refactor:** Extracted shared stableHash utility to hashUtils.ts
+- **Refactor:** AnkiConnector reuses instance across sync operations via updateSettings()
+- **Fix:** Deletion display now gated on actual deletion API success
+- **Fix:** noteType settings field has empty-value guard restoring "Basic" default
+- **CI:** Added push trigger, Prettier format check, manifest.json verification
+- **CI:** Dependabot now watches GitHub Actions; npm updates grouped by minor/patch
+- **Chore:** Dependency updates (@types/node, @eslint/json, eslint-plugin-obsidianmd)
+- **Docs:** Full documentation page at teamsuperpanda.com/pandazap
+
 ## [1.0.8] - 2026-07-13
 - More reliable syncing, including safer matching when cards have similar content across different notes.
 - Safer deletion checks so changes stay tied to the note that started the sync.

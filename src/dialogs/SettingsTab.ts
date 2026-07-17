@@ -51,6 +51,38 @@ export class PandaZapSettingTab extends PluginSettingTab {
       },
       {
         type: 'group',
+        heading: 'Note type',
+        items: [
+          {
+            name: 'Note type',
+            desc: 'The Anki note type/model used when creating new notes (e.g., Basic, Cloze).',
+            render: (setting) => {
+              setting.addText((text) => {
+                const t = text
+                  .setPlaceholder('Basic')
+                  .setValue(this.plugin.settings.noteType)
+                  .onChange((value) => {
+                    this.plugin.settings.noteType = value.trim();
+                    void this.plugin.saveSettings();
+                  });
+
+                const inputEl = (t as TextComponentWithInput).inputEl;
+                inputEl.addEventListener('blur', () => {
+                  if (!inputEl.value || !inputEl.value.trim()) {
+                    const def = DEFAULT_SETTINGS.noteType;
+                    t.setValue(def);
+                    this.plugin.settings.noteType = def;
+                    void this.plugin.saveSettings();
+                    new Notice('Note type cannot be empty - restored to default');
+                  }
+                });
+              });
+            },
+          },
+        ],
+      },
+      {
+        type: 'group',
         heading: 'Anki connect',
         items: [
           {

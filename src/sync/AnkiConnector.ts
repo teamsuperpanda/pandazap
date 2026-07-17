@@ -10,6 +10,7 @@ import {
   NoteCacheEntry,
 } from './types';
 import { ANKI_CONNECT_VERSION, PLUGIN_TAG, DEFAULT_TIMEOUT_MS } from '../constants';
+import { stableHash } from './hashUtils';
 import {
   resolveImageSource,
   readImageFileToBase64,
@@ -29,6 +30,12 @@ export class AnkiConnector {
   constructor(settings: PandaZapSettings, app: App) {
     this.settings = settings;
     this.app = app;
+  }
+
+  /** Update settings and invalidate any cached data. Call when settings change. */
+  updateSettings(newSettings: PandaZapSettings): void {
+    this.settings = newSettings;
+    this.noteCache = null;
   }
 
   async testConnection(): Promise<boolean> {
@@ -633,15 +640,6 @@ export class AnkiConnector {
 
 function normalizeField(s: string): string {
   return (s || '').toString().trim();
-}
-
-function stableHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36).padStart(7, '0');
 }
 
 function normalizeHtmlField(value: string): string {

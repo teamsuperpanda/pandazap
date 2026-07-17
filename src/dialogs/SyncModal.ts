@@ -1,6 +1,6 @@
 import { Modal, App, Notice } from 'obsidian';
 import PandaZapPlugin from '../main';
-import { SyncAnalysis, SyncContext } from '../sync/types';
+import { SyncAnalysis, SyncContext, BatchSyncContext, createSyncContext } from '../sync/types';
 import { PreviewModal } from './PreviewModal';
 
 // Interface to properly type the App's setting property
@@ -17,11 +17,17 @@ export class SyncModal extends Modal {
   private isConnected: boolean = false;
   private isSyncing: boolean = false;
   private readonly syncContext: SyncContext;
+  private readonly batchSyncContext?: BatchSyncContext;
+  private readonly isBatchMode: boolean;
 
-  constructor(app: App, plugin: PandaZapPlugin) {
+  constructor(app: App, plugin: PandaZapPlugin, batchContext?: BatchSyncContext) {
     super(app);
     this.plugin = plugin;
-    this.syncContext = plugin.captureSyncContext();
+    this.batchSyncContext = batchContext;
+    this.isBatchMode = batchContext !== undefined;
+    this.syncContext = this.isBatchMode
+      ? createSyncContext([], undefined, undefined)
+      : plugin.captureSyncContext();
   }
 
   async onOpen() {
@@ -52,7 +58,11 @@ export class SyncModal extends Modal {
     try {
       this.isConnected = await this.plugin.testAnkiConnection();
       if (this.isConnected) {
-        this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
+        if (this.isBatchMode && this.batchSyncContext) {
+          this.syncAnalysis = await this.plugin.analyzeBatchSyncOperation(this.batchSyncContext);
+        } else {
+          this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
+        }
       }
     } catch {
       this.isConnected = false;
@@ -82,6 +92,16 @@ export class SyncModal extends Modal {
     if (!this.isCssAvailable(dot))
       statusDiv.createSpan({ text: '• ', cls: 'panda-zap-status-text success' });
     statusDiv.createSpan({ text: 'Connected to Anki', cls: 'panda-zap-status-text success' });
+
+    if (this.isBatchMode && this.batchSyncContext) {
+      const batchInfo = statusContainer.createDiv('panda-zap-batch-info');
+      const nNotes = this.batchSyncContext.notePaths.length;
+      const nCards = this.batchSyncContext.totalCards;
+      batchInfo.createSpan({
+        text: `${nNotes} note${nNotes !== 1 ? 's' : ''} selected, ${nCards} card${nCards !== 1 ? 's' : ''} total`,
+        cls: 'panda-zap-batch-stats',
+      });
+    }
   }
 
   private isCssAvailable(testEl: HTMLElement): boolean {
@@ -175,7 +195,16 @@ export class SyncModal extends Modal {
       new Notice('No analysis available');
       return;
     }
-    new PreviewModal(this.app, this.syncAnalysis, this.plugin.settings).open();
+    let noteLabels: Map<string, string> | undefined;
+    if (this.isBatchMode && this.batchSyncContext) {
+      noteLabels = new Map(
+        this.batchSyncContext.notePaths.map((p) => {
+          const name = p.split('/').pop()?.replace(/\.md$/, '') ?? p;
+          return [p, name] as [string, string];
+        })
+      );
+    }
+    new PreviewModal(this.app, this.syncAnalysis, this.plugin.settings, noteLabels).open();
   }
 
   // Show a styled Obsidian modal to confirm deletion, returns true if user confirms
@@ -234,159 +263,13 @@ export class SyncModal extends Modal {
       return;
     }
 
-    // Extract cards first
     try {
-      const cards = this.syncContext.cards.map((card) => ({ ...card }));
-      if (cards.length === 0) {
-        const qTag = `${this.plugin.settings.questionWord}:`;
-        const aTag = `${this.plugin.settings.answerWord}:`;
-        new Notice(`No ${qTag} ${aTag} cards found in current note`);
-        return;
+      // In batch mode, aggregate all cards from the batch context
+      if (this.isBatchMode && this.batchSyncContext) {
+        await this.performBatchSync(this.batchSyncContext);
+      } else {
+        await this.performSingleSync();
       }
-
-      // If we don't have analysis loaded, try to load it so we can prompt for deletions
-      if (!this.syncAnalysis) {
-        try {
-          this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
-        } catch {
-          // ignore analysis failure — we'll proceed without deletion prompt
-        }
-      }
-
-      // If there are deletions detected, ask the user to confirm before proceeding.
-      // If the user cancels, close the modal and abort the sync entirely.
-      let deleteConfirmed = false;
-      let confirmedDeletionIds: readonly string[] | undefined;
-      if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
-        const userConfirmed = await this.showDeleteConfirmation(
-          this.syncAnalysis.cardsToDelete.length
-        );
-        if (!userConfirmed) {
-          // User cancelled deletion -> close modal and abort sync
-          this.close();
-          return;
-        }
-        deleteConfirmed = true;
-        confirmedDeletionIds = Object.freeze(
-          this.syncAnalysis.cardsToDelete
-            .map((card) => card.existingCardId)
-            .filter((id): id is string => Boolean(id))
-        );
-      }
-
-      // Hide summary and action buttons now that the user has confirmed (or there were no deletions)
-      const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
-      const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
-      const resultContainer = this.contentEl.querySelector('.panda-zap-results');
-      if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.add('hidden');
-      if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.add('hidden');
-      if (resultContainer?.instanceOf(HTMLElement)) {
-        resultContainer.classList.remove('hidden');
-        resultContainer.classList.add('visible');
-        resultContainer.empty();
-        const loadingList = resultContainer.createDiv('panda-zap-results-list');
-        const loadingItem = loadingList.createDiv('panda-zap-result-item');
-        loadingItem.createSpan({ text: 'Syncing...' });
-      }
-
-      new Notice('Syncing cards to Anki...');
-      const results = await this.plugin.syncCardsToAnki(
-        cards,
-        false,
-        deleteConfirmed,
-        this.syncContext,
-        confirmedDeletionIds
-      );
-      const finalResultContainer = this.contentEl.querySelector('.panda-zap-results');
-      if (!finalResultContainer?.instanceOf(HTMLElement)) return;
-      finalResultContainer.classList.remove('hidden');
-      finalResultContainer.classList.add('visible');
-      finalResultContainer.empty();
-      finalResultContainer.createEl('h3', { text: 'Sync results' });
-      const resultsList = finalResultContainer.createDiv('panda-zap-results-list');
-      // Separate skipped entries from main results and render skipped in a collapsible section
-      const skipped: string[] = [];
-      results.forEach((result) => {
-        const lowered = result.toLowerCase();
-        if (
-          lowered.includes('skipped') &&
-          (lowered.includes('already') || lowered.includes('exists') || lowered.includes('skip'))
-        ) {
-          skipped.push(result);
-        } else {
-          const item = resultsList.createDiv('panda-zap-result-item');
-          item.createSpan({ text: result });
-        }
-      });
-
-      if (skipped.length > 0) {
-        const skipHeader = finalResultContainer.createDiv('panda-zap-section-header');
-        const toggle = skipHeader.createSpan({ cls: 'panda-zap-toggle-icon', text: '▸' });
-        skipHeader.createDiv({
-          cls: 'panda-zap-section-title',
-          text: `Skipped (${skipped.length})`,
-        });
-        const skippedList = finalResultContainer.createDiv(
-          'panda-zap-results-list panda-zap-skipped-list hidden'
-        );
-        skipped.forEach((s) => {
-          const item = skippedList.createDiv('panda-zap-result-item');
-          item.createSpan({ text: s });
-        });
-        skipHeader.onclick = () => {
-          const isHidden = skippedList.classList.contains('hidden');
-          if (isHidden) {
-            skippedList.classList.remove('hidden');
-            skippedList.classList.add('visible');
-          } else {
-            skippedList.classList.remove('visible');
-            skippedList.classList.add('hidden');
-          }
-          toggle.textContent = isHidden ? '▾' : '▸';
-        };
-      }
-
-      // After a sync completes, keep summary/buttons hidden and show deletion details if available
-      const deletedLine = results.find(
-        (r) => /deleted\s+\d+\s+notes/i.test(r) || (r.includes('Deleted') && r.includes('notes'))
-      );
-      if (deleteConfirmed && deletedLine) {
-        // Try to use the previously loaded analysis for details, otherwise fetch a fresh one
-        let deletionAnalysis = this.syncAnalysis;
-        if (!deletionAnalysis) {
-          try {
-            deletionAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
-          } catch {
-            // ignore — we'll still show the generic deleted summary
-          }
-        }
-
-        if (
-          deletionAnalysis &&
-          deletionAnalysis.cardsToDelete &&
-          deletionAnalysis.cardsToDelete.length > 0
-        ) {
-          const deletedSection = finalResultContainer.createDiv('panda-zap-deleted-section');
-          deletedSection.createEl('h4', {
-            text: `Deleted notes (${deletionAnalysis.cardsToDelete.length})`,
-          });
-          const deletedList = deletedSection.createDiv('panda-zap-results-list');
-          deletionAnalysis.cardsToDelete.forEach((cd) => {
-            const item = deletedList.createDiv('panda-zap-result-item');
-            const id = cd.existingCardId || 'unknown-id';
-            const q = cd.card && cd.card.question ? cd.card.question : '<no question>';
-            const a = cd.card && cd.card.answer ? cd.card.answer : '<no answer>';
-            item.createSpan({ text: `🗑️ ${q} → ${cd.deckName} (id: ${id})` });
-            // optionally show the answer on the next line when available
-            if (a) {
-              const meta = item.createDiv({ cls: 'panda-zap-card-meta' });
-              meta.createSpan({ text: `Answer: ${a}`, cls: 'panda-zap-card-line' });
-            }
-          });
-        }
-      }
-
-      new Notice(`✅ Sync completed! ${cards.length} cards processed`);
     } catch (error: unknown) {
       // restore UI elements so the user can try again
       try {
@@ -400,6 +283,205 @@ export class SyncModal extends Modal {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`❌ Sync failed: ${errorMsg}`);
     }
+  }
+
+  private async performSingleSync() {
+    const cards = this.syncContext.cards.map((card) => ({ ...card }));
+    if (cards.length === 0) {
+      const qTag = `${this.plugin.settings.questionWord}:`;
+      const aTag = `${this.plugin.settings.answerWord}:`;
+      new Notice(`No ${qTag} ${aTag} cards found in current note`);
+      return;
+    }
+
+    // If we don't have analysis loaded, try to load it so we can prompt for deletions
+    if (!this.syncAnalysis) {
+      try {
+        this.syncAnalysis = await this.plugin.analyzeSyncOperation(this.syncContext);
+      } catch {
+        // ignore analysis failure, proceed without deletion prompt
+      }
+    }
+
+    // If there are deletions detected, ask the user to confirm before proceeding.
+    // If the user cancels, close the modal and abort the sync entirely.
+    let deleteConfirmed = false;
+    let confirmedDeletionIds: readonly string[] | undefined;
+    if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
+      const userConfirmed = await this.showDeleteConfirmation(
+        this.syncAnalysis.cardsToDelete.length
+      );
+      if (!userConfirmed) {
+        // User cancelled deletion -> close modal and abort sync
+        this.close();
+        return;
+      }
+      deleteConfirmed = true;
+      confirmedDeletionIds = Object.freeze(
+        this.syncAnalysis.cardsToDelete
+          .map((card) => card.existingCardId)
+          .filter((id): id is string => Boolean(id))
+      );
+    }
+
+    await this.hideUiAndSync(
+      async () =>
+        this.plugin.syncCardsToAnki(
+          cards,
+          false,
+          deleteConfirmed,
+          this.syncContext,
+          confirmedDeletionIds
+        ),
+      cards.length,
+      deleteConfirmed
+    );
+  }
+
+  private async performBatchSync(bContext: BatchSyncContext) {
+    if (bContext.totalCards === 0) {
+      new Notice('No cards found in selected notes');
+      return;
+    }
+
+    // If we don't have analysis loaded, try to load it
+    if (!this.syncAnalysis) {
+      try {
+        this.syncAnalysis = await this.plugin.analyzeBatchSyncOperation(bContext);
+      } catch {
+        // ignore
+      }
+    }
+
+    // Handle deletions per-note
+    let deleteConfirmed = false;
+    let confirmedDeletionIdsByNote: Map<string, readonly string[]> | undefined;
+    if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
+      const userConfirmed = await this.showDeleteConfirmation(
+        this.syncAnalysis.cardsToDelete.length
+      );
+      if (!userConfirmed) {
+        this.close();
+        return;
+      }
+      deleteConfirmed = true;
+      // Build per-note deletion ID map
+      const byNote = new Map<string, string[]>();
+      for (const cd of this.syncAnalysis.cardsToDelete) {
+        if (cd.notePath && cd.existingCardId) {
+          const list = byNote.get(cd.notePath) ?? [];
+          list.push(cd.existingCardId);
+          byNote.set(cd.notePath, list);
+        }
+      }
+      confirmedDeletionIdsByNote = new Map(
+        [...byNote.entries()].map(([k, v]) => [k, Object.freeze(v)] as const)
+      );
+    }
+
+    await this.hideUiAndSync(
+      async () =>
+        this.plugin.syncBatchCards(
+          bContext,
+          false,
+          deleteConfirmed,
+          confirmedDeletionIdsByNote
+        ),
+        bContext.totalCards,
+        deleteConfirmed
+    );
+  }
+
+  private async hideUiAndSync(
+    syncFn: () => Promise<string[]>,
+    totalCardCount: number,
+    deleteConfirmed: boolean = false
+  ) {
+    // Hide summary and action buttons now that the user has confirmed (or there were no deletions)
+    const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
+    const buttonContainerEl = this.contentEl.querySelector('.panda-zap-button-container');
+    const resultContainer = this.contentEl.querySelector('.panda-zap-results');
+    if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.add('hidden');
+    if (buttonContainerEl?.instanceOf(HTMLElement)) buttonContainerEl.classList.add('hidden');
+    if (resultContainer?.instanceOf(HTMLElement)) {
+      resultContainer.classList.remove('hidden');
+      resultContainer.classList.add('visible');
+      resultContainer.empty();
+      const loadingList = resultContainer.createDiv('panda-zap-results-list');
+      const loadingItem = loadingList.createDiv('panda-zap-result-item');
+      loadingItem.createSpan({ text: 'Syncing...' });
+    }
+
+    new Notice('Syncing cards to Anki...');
+    const results = await syncFn();
+    const finalResultContainer = this.contentEl.querySelector('.panda-zap-results');
+    if (!finalResultContainer?.instanceOf(HTMLElement)) return;
+    finalResultContainer.classList.remove('hidden');
+    finalResultContainer.classList.add('visible');
+    finalResultContainer.empty();
+    finalResultContainer.createEl('h3', { text: 'Sync results' });
+    const resultsList = finalResultContainer.createDiv('panda-zap-results-list');
+    // Separate skipped entries from main results and render skipped in a collapsible section
+    const skipped: string[] = [];
+    results.forEach((result) => {
+      const lowered = result.toLowerCase();
+      if (
+        lowered.includes('skipped') &&
+        (lowered.includes('already') || lowered.includes('exists') || lowered.includes('skip'))
+      ) {
+        skipped.push(result);
+      } else {
+        const item = resultsList.createDiv('panda-zap-result-item');
+        item.createSpan({ text: result });
+      }
+    });
+
+    if (skipped.length > 0) {
+      const skipHeader = finalResultContainer.createDiv('panda-zap-section-header');
+      const toggle = skipHeader.createSpan({ cls: 'panda-zap-toggle-icon', text: '▸' });
+      skipHeader.createDiv({
+        cls: 'panda-zap-section-title',
+        text: `Skipped (${skipped.length})`,
+      });
+      const skippedList = finalResultContainer.createDiv(
+        'panda-zap-results-list panda-zap-skipped-list hidden'
+      );
+      skipped.forEach((s) => {
+        const item = skippedList.createDiv('panda-zap-result-item');
+        item.createSpan({ text: s });
+      });
+      skipHeader.onclick = () => {
+        const isHidden = skippedList.classList.contains('hidden');
+        if (isHidden) {
+          skippedList.classList.remove('hidden');
+          skippedList.classList.add('visible');
+        } else {
+          skippedList.classList.remove('visible');
+          skippedList.classList.add('hidden');
+        }
+        toggle.textContent = isHidden ? '▾' : '▸';
+      };
+    }
+
+    // Show deletion details if deletions were actually performed
+    const deletionSucceeded = deleteConfirmed && results.some(
+      (r) => /deleted\s+\d+\s+notes/i.test(r)
+    );
+    if (deletionSucceeded && this.syncAnalysis?.cardsToDelete.length) {
+      const deletedSection = finalResultContainer.createDiv('panda-zap-deleted-section');
+      deletedSection.createEl('h4', {
+        text: `Deleted notes (${this.syncAnalysis.cardsToDelete.length})`,
+      });
+      const deletedList = deletedSection.createDiv('panda-zap-results-list');
+      this.syncAnalysis.cardsToDelete.forEach((cd) => {
+        const item = deletedList.createDiv('panda-zap-result-item');
+        const id = cd.existingCardId || 'unknown-id';
+        const q = cd.card && cd.card.question ? cd.card.question : '<no question>';
+        item.createSpan({ text: `Deleted: ${q} (id: ${id})` });
+      });
+    }
+
+    new Notice(`✅ Sync completed! ${totalCardCount} cards processed`);
   }
 
   private openSettings() {

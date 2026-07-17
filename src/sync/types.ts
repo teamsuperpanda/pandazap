@@ -61,6 +61,8 @@ export interface CardSyncInfo {
   action: CardAction;
   deckName: string;
   existingCardId?: string;
+  /** Source note path, set during batch sync to identify which note a card belongs to. */
+  notePath?: string;
 }
 
 export interface SyncAnalysis {
@@ -87,6 +89,30 @@ export function createSyncContext(
     cards: Object.freeze(cardSnapshot),
     notePath,
     noteContent,
+  });
+}
+
+/**
+ * Point-in-time snapshot of multiple notes for batch analysis/sync.
+ * Each entry maps note path to its extracted card context.
+ */
+export interface BatchSyncContext {
+  readonly contexts: ReadonlyMap<string, SyncContext>;
+  readonly notePaths: readonly string[];
+  readonly totalCards: number;
+}
+
+export function createBatchSyncContext(contexts: Map<string, SyncContext>): BatchSyncContext {
+  const frozenContexts = new Map(contexts);
+  const notePaths = [...frozenContexts.keys()];
+  const totalCards = [...frozenContexts.values()].reduce(
+    (sum, ctx) => sum + ctx.cards.length,
+    0
+  );
+  return Object.freeze({
+    contexts: frozenContexts,
+    notePaths,
+    totalCards,
   });
 }
 

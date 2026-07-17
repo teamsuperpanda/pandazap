@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: ['main']
   pull_request:
     branches: ['main']
 
@@ -26,6 +28,9 @@ jobs:
       - name: Lint source
         run: npm run lint
 
+      - name: Check formatting
+        run: npx prettier --check "src/**/*.ts"
+
       - name: Run tests
         run: npm test -- --run
 
@@ -40,6 +45,10 @@ jobs:
           fi
           if [ ! -f "styles.css" ]; then
             echo "❌ styles.css not found"
+            exit 1
+          fi
+          if [ ! -f "manifest.json" ]; then
+            echo "❌ manifest.json not found"
             exit 1
           fi
           echo "✅ Build artifacts verified"

@@ -3,7 +3,7 @@ name: Release Obsidian plugin
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
 
 permissions:
   contents: write
@@ -47,6 +47,11 @@ jobs:
             found && $0 ~ "^## \\[" { exit }
             found { print }
           ' CHANGELOG.md > release_notes.md
+
+          if [ ! -s release_notes.md ]; then
+            echo "❌ Could not extract release notes for version $version from CHANGELOG.md"
+            exit 1
+          fi
 
       - name: Attach build provenance
         uses: actions/attest-build-provenance@v2
