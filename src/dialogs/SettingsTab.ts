@@ -91,7 +91,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
             render: (setting) => {
               setting.addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(() => {
-                  this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
+                  Object.assign(this.plugin.settings, DEFAULT_SETTINGS);
                   void this.plugin
                     .saveSettings()
                     .then(() => {
@@ -116,22 +116,50 @@ export class PandaZapSettingTab extends PluginSettingTab {
           {
             name: 'Deck override word',
             desc: `Example: ${this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord}::MyDeck`,
-            render: (setting) => this.renderDeckWordSetting(setting),
+            render: (setting) =>
+              this.renderWordSetting(
+                setting,
+                'deckOverrideWord',
+                'Deck override word',
+                'Deck',
+                (w) => `Example: ${w}::MyDeck`
+              ),
           },
           {
             name: 'Question word',
             desc: `Example: ${this.plugin.settings.questionWord || DEFAULT_SETTINGS.questionWord}: What is the capital of France?`,
-            render: (setting) => this.renderQuestionWordSetting(setting),
+            render: (setting) =>
+              this.renderWordSetting(
+                setting,
+                'questionWord',
+                'Question word',
+                'Q',
+                (w) => `Example: ${w}: What is the capital of France?`
+              ),
           },
           {
             name: 'Answer word',
             desc: `Example: ${this.plugin.settings.answerWord || DEFAULT_SETTINGS.answerWord}: Paris`,
-            render: (setting) => this.renderAnswerWordSetting(setting),
+            render: (setting) =>
+              this.renderWordSetting(
+                setting,
+                'answerWord',
+                'Answer word',
+                'A',
+                (w) => `Example: ${w}: Paris`
+              ),
           },
           {
             name: 'Image word',
             desc: `Example: ${this.plugin.settings.imageWord || DEFAULT_SETTINGS.imageWord}: [[my-image.png]]`,
-            render: (setting) => this.renderImageWordSetting(setting),
+            render: (setting) =>
+              this.renderWordSetting(
+                setting,
+                'imageWord',
+                'Image word',
+                'I',
+                (w) => `Example: ${w}: [[my-image.png]]`
+              ),
           },
           {
             name: 'Test Anki connection',
@@ -180,133 +208,40 @@ export class PandaZapSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderDeckWordSetting(deckSetting: Setting): void {
-    const currentDeckWord =
-      this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord;
-    deckSetting
-      .setName('Deck override word')
-      .setDesc(`Example: ${currentDeckWord}::MyDeck`)
+  private renderWordSetting(
+    setting: Setting,
+    key: 'deckOverrideWord' | 'questionWord' | 'answerWord' | 'imageWord',
+    label: string,
+    placeholder: string,
+    example: (word: string) => string
+  ): void {
+    const current = this.plugin.settings[key] || DEFAULT_SETTINGS[key];
+    setting
+      .setName(label)
+      .setDesc(example(current))
       .addText((text) => {
         text
-          .setPlaceholder('Deck')
-          .setValue(this.plugin.settings.deckOverrideWord)
+          .setPlaceholder(placeholder)
+          .setValue(this.plugin.settings[key])
           .onChange((value) => {
-            this.plugin.settings.deckOverrideWord = value;
+            if (key !== 'deckOverrideWord' && (!value || !value.trim())) return;
+            this.plugin.settings[key] = key === 'deckOverrideWord' ? value : value.trim();
             void this.plugin.saveSettings();
-            const w = (value && value.trim()) || DEFAULT_SETTINGS.deckOverrideWord;
-            if (deckSetting.descEl) deckSetting.descEl.textContent = `Example: ${w}::MyDeck`;
+            const w = (value && value.trim()) || DEFAULT_SETTINGS[key];
+            if (setting.descEl) setting.descEl.textContent = example(w);
           });
 
         const inputEl = (text as TextComponentWithInput).inputEl;
         inputEl.addEventListener('blur', () => {
           if (!inputEl.value || !inputEl.value.trim()) {
-            const def = DEFAULT_SETTINGS.deckOverrideWord;
+            const def = DEFAULT_SETTINGS[key];
             text.setValue(def);
-            this.plugin.settings.deckOverrideWord = def;
+            this.plugin.settings[key] = def;
             void this.plugin.saveSettings();
-            if (deckSetting.descEl) deckSetting.descEl.textContent = `Example: ${def}::MyDeck`;
-            new Notice('Deck override word cannot be empty - restored to default');
+            if (setting.descEl) setting.descEl.textContent = example(def);
+            new Notice(`${label} cannot be empty - restored to default`);
           }
-        });
-      });
-  }
-
-  private renderQuestionWordSetting(questionSetting: Setting): void {
-    const currentQ = this.plugin.settings.questionWord || DEFAULT_SETTINGS.questionWord;
-    questionSetting
-      .setName('Question word')
-      .setDesc(`Example: ${currentQ}: What is the capital of France?`)
-      .addText((text) => {
-        text
-          .setPlaceholder('Q')
-          .setValue(this.plugin.settings.questionWord)
-          .onChange((value) => {
-            if (!value || !value.trim()) return;
-            this.plugin.settings.questionWord = value.trim();
-            void this.plugin.saveSettings();
-            const w = value.trim();
-            if (questionSetting.descEl)
-              questionSetting.descEl.textContent = `Example: ${w}: What is the capital of France?`;
-          });
-
-        const inputEl = (text as TextComponentWithInput).inputEl;
-        inputEl.addEventListener('blur', () => {
-          if (!inputEl.value || !inputEl.value.trim()) {
-            const def = DEFAULT_SETTINGS.questionWord;
-            text.setValue(def);
-            this.plugin.settings.questionWord = def;
-            void this.plugin.saveSettings();
-            if (questionSetting.descEl)
-              questionSetting.descEl.textContent = `Example: ${def}: What is the capital of France?`;
-            new Notice('Question word cannot be empty - restored to default');
-          }
-          showMarkerValidation(this.plugin);
-        });
-      });
-  }
-
-  private renderAnswerWordSetting(answerSetting: Setting): void {
-    const currentA = this.plugin.settings.answerWord || DEFAULT_SETTINGS.answerWord;
-    answerSetting
-      .setName('Answer word')
-      .setDesc(`Example: ${currentA}: Paris`)
-      .addText((text) => {
-        text
-          .setPlaceholder('A')
-          .setValue(this.plugin.settings.answerWord)
-          .onChange((value) => {
-            if (!value || !value.trim()) return;
-            this.plugin.settings.answerWord = value.trim();
-            void this.plugin.saveSettings();
-            const w = value.trim();
-            if (answerSetting.descEl) answerSetting.descEl.textContent = `Example: ${w}: Paris`;
-          });
-
-        const inputEl = (text as TextComponentWithInput).inputEl;
-        inputEl.addEventListener('blur', () => {
-          if (!inputEl.value || !inputEl.value.trim()) {
-            const def = DEFAULT_SETTINGS.answerWord;
-            text.setValue(def);
-            this.plugin.settings.answerWord = def;
-            void this.plugin.saveSettings();
-            if (answerSetting.descEl) answerSetting.descEl.textContent = `Example: ${def}: Paris`;
-            new Notice('Answer word cannot be empty - restored to default');
-          }
-          showMarkerValidation(this.plugin);
-        });
-      });
-  }
-
-  private renderImageWordSetting(imageSetting: Setting): void {
-    const currentI = this.plugin.settings.imageWord || DEFAULT_SETTINGS.imageWord;
-    imageSetting
-      .setName('Image word')
-      .setDesc(`Example: ${currentI}: [[my-image.png]]`)
-      .addText((text) => {
-        text
-          .setPlaceholder('I')
-          .setValue(this.plugin.settings.imageWord)
-          .onChange((value) => {
-            if (!value || !value.trim()) return;
-            this.plugin.settings.imageWord = value.trim();
-            void this.plugin.saveSettings();
-            const w = value.trim();
-            if (imageSetting.descEl)
-              imageSetting.descEl.textContent = `Example: ${w}: [[my-image.png]]`;
-          });
-
-        const inputEl = (text as TextComponentWithInput).inputEl;
-        inputEl.addEventListener('blur', () => {
-          if (!inputEl.value || !inputEl.value.trim()) {
-            const def = DEFAULT_SETTINGS.imageWord;
-            text.setValue(def);
-            this.plugin.settings.imageWord = def;
-            void this.plugin.saveSettings();
-            if (imageSetting.descEl)
-              imageSetting.descEl.textContent = `Example: ${def}: [[my-image.png]]`;
-            new Notice('Image word cannot be empty - restored to default');
-          }
-          showMarkerValidation(this.plugin);
+          if (key !== 'deckOverrideWord') showMarkerValidation(this.plugin);
         });
       });
   }

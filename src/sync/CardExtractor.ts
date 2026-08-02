@@ -32,6 +32,7 @@ export class CardExtractor {
 
   processQACards(element: HTMLElement, plugin?: PandaZapPlugin) {
     const containers = element.querySelectorAll('p, div, span, li');
+    const rx = buildMarkerRegexes(plugin?.settings ?? this.settings);
 
     containers.forEach((container) => {
       if (
@@ -42,7 +43,6 @@ export class CardExtractor {
       }
 
       const fullText = container.textContent || '';
-      const rx = buildMarkerRegexes(plugin?.settings ?? this.settings);
 
       if (!rx.qLabel.test(fullText) && !rx.aLabel.test(fullText) && !rx.iLabel.test(fullText)) {
         return;
@@ -57,6 +57,7 @@ export class CardExtractor {
         const textNode = node as Text;
         if (!textNode.parentElement?.closest('code, pre')) {
           const t = textNode.nodeValue ?? '';
+          rx.qaTextNode.lastIndex = 0;
           if (rx.qaTextNode.test(t)) {
             toUpdate.push(textNode);
           }

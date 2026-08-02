@@ -78,9 +78,7 @@ export class SyncModal extends Modal {
     statusContainer.empty();
     if (!this.isConnected) {
       const statusDiv = statusContainer.createDiv('panda-zap-status-minimal');
-      const dot = statusDiv.createSpan({ cls: 'panda-zap-status-dot error' });
-      if (!this.isCssAvailable(dot))
-        statusDiv.createSpan({ text: '• ', cls: 'panda-zap-status-text error' });
+      statusDiv.createSpan({ cls: 'panda-zap-status-dot error' });
       statusDiv.createSpan({
         text: 'Not connected to Anki',
         cls: 'panda-zap-status-text error',
@@ -88,9 +86,7 @@ export class SyncModal extends Modal {
       return;
     }
     const statusDiv = statusContainer.createDiv('panda-zap-status-minimal');
-    const dot = statusDiv.createSpan({ cls: 'panda-zap-status-dot success' });
-    if (!this.isCssAvailable(dot))
-      statusDiv.createSpan({ text: '• ', cls: 'panda-zap-status-text success' });
+    statusDiv.createSpan({ cls: 'panda-zap-status-dot success' });
     statusDiv.createSpan({ text: 'Connected to Anki', cls: 'panda-zap-status-text success' });
 
     if (this.isBatchMode && this.batchSyncContext) {
@@ -102,12 +98,6 @@ export class SyncModal extends Modal {
         cls: 'panda-zap-batch-stats',
       });
     }
-  }
-
-  private isCssAvailable(testEl: HTMLElement): boolean {
-    const w = testEl.offsetWidth;
-    const h = testEl.offsetHeight;
-    return w >= 8 && h >= 8;
   }
 
   private renderSyncSummary(container: HTMLElement) {
@@ -140,14 +130,6 @@ export class SyncModal extends Modal {
       cls: 'panda-zap-pill-number',
     });
     deletePill.createSpan({ text: ' to remove', cls: 'panda-zap-pill-label' });
-
-    if (!this.isCssAvailable(addPill)) {
-      summary.empty();
-      const list = summary.createEl('ul');
-      list.createEl('li', { text: `${this.syncAnalysis.cardsToAdd.length} to add` });
-      list.createEl('li', { text: `${this.syncAnalysis.cardsToUpdate.length} to update` });
-      list.createEl('li', { text: `${this.syncAnalysis.cardsToDelete.length} to remove` });
-    }
   }
 
   private renderButtons(container: HTMLElement) {
@@ -166,7 +148,7 @@ export class SyncModal extends Modal {
           if (connected) {
             new Notice('Connected to Anki!');
             this.close();
-            new SyncModal(this.app, this.plugin).open();
+            new SyncModal(this.app, this.plugin, this.batchSyncContext).open();
           } else {
             new Notice('Still not connected to Anki');
           }
@@ -286,8 +268,7 @@ export class SyncModal extends Modal {
   }
 
   private async performSingleSync() {
-    const cards = this.syncContext.cards.map((card) => ({ ...card }));
-    if (cards.length === 0) {
+    if (this.syncContext.cards.length === 0) {
       const qTag = `${this.plugin.settings.questionWord}:`;
       const aTag = `${this.plugin.settings.answerWord}:`;
       new Notice(`No ${qTag} ${aTag} cards found in current note`);
@@ -326,14 +307,8 @@ export class SyncModal extends Modal {
 
     await this.hideUiAndSync(
       async () =>
-        this.plugin.syncCardsToAnki(
-          cards,
-          false,
-          deleteConfirmed,
-          this.syncContext,
-          confirmedDeletionIds
-        ),
-      cards.length,
+        this.plugin.syncCardsToAnki(false, deleteConfirmed, this.syncContext, confirmedDeletionIds),
+      this.syncContext.cards.length,
       deleteConfirmed
     );
   }

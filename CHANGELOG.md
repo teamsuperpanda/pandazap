@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] - 2026-08-02
+- Syncing is noticeably faster when notes have lots of cards or when a deck already has many cards in Anki.
+- Large images now transfer without slowing the plugin down.
+- Reading view stays quick on long notes.
+- Syncing several selected notes at once now reads them all together instead of one at a time.
+- Fixed: after a successful connection test, a batch sync could switch to syncing only the current note instead of the selected notes.
+- Cleaned up behind the scenes and removed duplicated code.
+
 ## [1.0.9] - 2026-07-18
 - **Feat:** Batch sync - select multiple notes in the file explorer and sync them all at once via "Panda Zap: Sync selected notes to Anki"
 - **Feat:** Note type setting now exposed in plugin settings UI

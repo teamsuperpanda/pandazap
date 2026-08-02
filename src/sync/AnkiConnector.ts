@@ -40,7 +40,7 @@ export class AnkiConnector {
 
   async testConnection(): Promise<boolean> {
     try {
-      const response = await this.ankiConnectRequest('version', ANKI_CONNECT_VERSION);
+      const response = await this.ankiConnectRequest('version');
       return typeof response === 'number' && response >= ANKI_CONNECT_VERSION;
     } catch (e: unknown) {
       console.warn('PandaZap: connection test failed', e);
@@ -49,7 +49,7 @@ export class AnkiConnector {
   }
 
   async analyzeSyncOperation(
-    cards: AnkiCard[],
+    cards: readonly AnkiCard[],
     notePath?: string,
     noteContent?: string
   ): Promise<SyncAnalysis> {
@@ -69,27 +69,11 @@ export class AnkiConnector {
     const deckName = this.getDeckName(notePath, noteContent);
 
     for (const card of cards) {
-      const existingCardId = await this.findExistingCard(card, deckName, notePath, noteContent);
+      const existingEntry = await this.findExistingCard(card, deckName, notePath, noteContent);
 
-      if (existingCardId) {
+      if (existingEntry) {
         try {
-          let ni: AnkiNoteInfo | undefined;
-          if (this.noteCache) {
-            for (const entries of this.noteCache.byFront.values()) {
-              const found = entries.find((e) => e.noteId === existingCardId);
-              if (found) {
-                ni = found.raw;
-                break;
-              }
-            }
-          }
-          if (!ni) {
-            const infoResult = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
-              notes: [existingCardId],
-            })) as AnkiNoteInfo[];
-            ni = infoResult?.[0];
-            if (!ni) throw new Error(`Anki returned no information for note ${existingCardId}`);
-          }
+          const ni = existingEntry.raw;
           const front = (ni?.fields?.Front?.value ?? '').trim();
           const back = (ni?.fields?.Back?.value ?? '').trim();
           const qTrim = (card.question || '').trim();
@@ -122,7 +106,7 @@ export class AnkiConnector {
               card,
               action: CardAction.UPDATE,
               deckName,
-              existingCardId,
+              existingCardId: existingEntry.noteId,
             };
             analysis.cardsToUpdate.push(cardSyncInfo);
           }
@@ -139,7 +123,7 @@ export class AnkiConnector {
       const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
       const findNotes = async (query: string): Promise<string[]> => {
-        const existingNoteIds = (await this.ankiConnectRequest('findNotes', ANKI_CONNECT_VERSION, {
+        const existingNoteIds = (await this.ankiConnectRequest('findNotes', {
           query,
         })) as string[];
         if (!Array.isArray(existingNoteIds)) throw new Error('Anki returned invalid note IDs');
@@ -154,7 +138,7 @@ export class AnkiConnector {
       }
 
       if (noteIds.size > 0) {
-        const notesInfo = (await this.ankiConnectRequest('notesInfo', ANKI_CONNECT_VERSION, {
+        const notesInfo = (await this.ankiConnectRequest('notesInfo', {
           notes: [...noteIds],
         })) as AnkiNoteInfo[];
         if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
@@ -189,14 +173,13 @@ export class AnkiConnector {
     deckName: string,
     notePath?: string,
     noteContent?: string
-  ): Promise<string | null> {
+  ): Promise<NoteCacheEntry | null> {
     await this.prefetchNotesForDeck(deckName);
-    const entry = this.selectCacheEntry(card, notePath, deckName, noteContent);
-    return entry?.noteId ?? null;
+    return this.selectCacheEntry(card, notePath, deckName, noteContent) ?? null;
   }
 
   async syncCards(
-    cards: AnkiCard[],
+    cards: readonly AnkiCard[],
     preview: boolean = false,
     notePath?: string,
     noteContent?: string,
@@ -213,7 +196,7 @@ export class AnkiConnector {
     const deckName = this.getDeckName(notePath, noteContent);
     if (this.settings.useNoteBased && notePath && !preview) {
       try {
-        await this.ankiConnectRequest('createDeck', 6, {
+        await this.ankiConnectRequest('createDeck', {
           deck: deckName,
         });
       } catch (e: unknown) {
@@ -274,7 +257,7 @@ export class AnkiConnector {
             results.push(`Skipped (already up-to-date): ${card.question} -> ${deckName}`);
           } else {
             try {
-              await this.ankiConnectRequest('addNote', 6, {
+              await this.ankiConnectRequest('addNote', {
                 note: {
                   deckName: deckName,
                   modelName: this.settings.noteType,
@@ -314,7 +297,7 @@ export class AnkiConnector {
               .map((d) => d.existingCardId)
               .filter((id): id is string => Boolean(id));
         if (toDelete.length > 0) {
-          await this.ankiConnectRequest('deleteNotes', 6, { notes: toDelete });
+          await this.ankiConnectRequest('deleteNotes', { notes: toDelete });
           results.push(`Deleted ${toDelete.length} notes from Anki`);
         }
       } catch (err: unknown) {
@@ -361,7 +344,7 @@ export class AnkiConnector {
         return { status: 'identical' };
       }
 
-      await this.ankiConnectRequest('updateNoteFields', 6, {
+      await this.ankiConnectRequest('updateNoteFields', {
         note: {
           id: noteId,
           fields: {
@@ -371,7 +354,10 @@ export class AnkiConnector {
         },
       });
       await this.ensureSourceTag(noteId, cached, notePath);
-      this.noteCache = null;
+      if (cached) {
+        if (cached.fields.Front) cached.fields.Front.value = card.question;
+        if (cached.fields.Back) cached.fields.Back.value = targetBack;
+      }
       return { status: 'updated' };
     }
 
@@ -412,10 +398,11 @@ export class AnkiConnector {
     if (cached.raw.tags?.includes(sourceTag)) return;
 
     const allTags = [...new Set([...(cached.raw.tags ?? []), sourceTag])];
-    await this.ankiConnectRequest('updateNoteTags', 6, {
+    await this.ankiConnectRequest('updateNoteTags', {
       note: parseInt(noteId, 10),
       tags: allTags,
     });
+    cached.raw.tags = allTags;
   }
 
   private async uploadImageToAnki(imagePath: string, notePath: string): Promise<string | null> {
@@ -433,7 +420,7 @@ export class AnkiConnector {
 
     const safeFilename = getStoredMediaFilenameForSource(source, notePath);
 
-    const result = (await this.ankiConnectRequest('storeMediaFile', 6, {
+    const result = (await this.ankiConnectRequest('storeMediaFile', {
       filename: safeFilename,
       data: base64,
     })) as string;
@@ -444,7 +431,7 @@ export class AnkiConnector {
     if (this.noteCache && this.noteCache.deckName === deckName) return;
     const noteCache = { deckName, byFront: new Map<string, NoteCacheEntry[]>() };
     const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
-    const noteIds = (await this.ankiConnectRequest('findNotes', 6, { query })) as string[];
+    const noteIds = (await this.ankiConnectRequest('findNotes', { query })) as string[];
     if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
 
     if (!noteIds || noteIds.length === 0) {
@@ -452,7 +439,7 @@ export class AnkiConnector {
       return;
     }
 
-    const notesInfo = (await this.ankiConnectRequest('notesInfo', 6, {
+    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
       notes: noteIds,
     })) as AnkiNoteInfo[];
     if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
@@ -555,7 +542,8 @@ export class AnkiConnector {
 
   private getDeckOverride(noteContent?: string): string | undefined {
     if (!noteContent || !this.settings.deckOverrideWord) return undefined;
-    const firstLine = noteContent.split(/\r?\n/)[0] || '';
+    const nl = noteContent.indexOf('\n');
+    const firstLine = (nl === -1 ? noteContent : noteContent.slice(0, nl)).replace(/\r$/, '');
     const esc = this.settings.deckOverrideWord.replace(/[.*+?^${}(|[\]\\]/g, '\\$&');
     const match = firstLine.match(new RegExp(`^${esc}::\\s*(.+)$`, 'i'));
     return match?.[1]?.trim().replace(/\//g, '::') || undefined;
@@ -585,11 +573,10 @@ export class AnkiConnector {
 
   private async ankiConnectRequest(
     action: string,
-    version: number,
     params?: Record<string, unknown>
   ): Promise<unknown> {
     const url = this.buildAnkiConnectUrl();
-    const body = JSON.stringify({ action, version, params });
+    const body = JSON.stringify({ action, version: ANKI_CONNECT_VERSION, params });
 
     const MAX_RETRIES = 2;
 
