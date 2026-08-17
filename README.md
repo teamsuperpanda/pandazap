@@ -2,7 +2,7 @@
 
 <p>
   <img src="https://img.shields.io/github/v/release/teamsuperpanda/pandazap?style=flat-square" alt="Version">
-  <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/status-stable-brightgreen?style=flat-square" alt="Status">
   <img src="https://img.shields.io/badge/desktop--only-8B5CF6?style=flat-square" alt="Desktop Only">
 </p>
@@ -55,6 +55,6 @@ Full docs with writing cards, settings reference, and troubleshooting: [teamsupe
 
 ## License
 
-PolyForm Noncommercial 1.0.0 - see [`LICENSE`](LICENSE). Free for hobby, personal, educational, and noncommercial use. Commercial use, rebranding, or resale is not permitted.
+MIT License - see [`LICENSE`](LICENSE).
 
 Privacy: see [`PRIVACY.md`](PRIVACY.md).

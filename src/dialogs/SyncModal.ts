@@ -190,7 +190,7 @@ export class SyncModal extends Modal {
   }
 
   // Show a styled Obsidian modal to confirm deletion, returns true if user confirms
-  private showDeleteConfirmation(count: number): Promise<boolean> {
+  private showDeleteConfirmation(count: number, noteCount?: number): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const m = new Modal(this.app);
       let settled = false;
@@ -204,7 +204,10 @@ export class SyncModal extends Modal {
       m.contentEl.addClass('panda-zap-delete-confirm');
       m.contentEl.createEl('h3', { text: 'Confirm deletion' });
       const msg = m.contentEl.createDiv('panda-zap-delete-msg');
-      msg.textContent = `This will delete ${count} cards from Anki that were removed from this note. Proceed?`;
+      msg.textContent =
+        noteCount && noteCount > 1
+          ? `This will delete ${count} cards from ${noteCount} notes that were removed from your notes. Proceed?`
+          : `This will delete ${count} cards from Anki that were removed from this note. Proceed?`;
       const btnRow = m.contentEl.createDiv('panda-zap-button-row');
 
       const cancel = btnRow.createEl('button', {
@@ -332,8 +335,14 @@ export class SyncModal extends Modal {
     let deleteConfirmed = false;
     let confirmedDeletionIdsByNote: Map<string, readonly string[]> | undefined;
     if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
+      const noteCount = new Set(
+        this.syncAnalysis.cardsToDelete
+          .map((cd) => cd.notePath)
+          .filter((p): p is string => Boolean(p))
+      ).size;
       const userConfirmed = await this.showDeleteConfirmation(
-        this.syncAnalysis.cardsToDelete.length
+        this.syncAnalysis.cardsToDelete.length,
+        noteCount
       );
       if (!userConfirmed) {
         this.close();

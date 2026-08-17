@@ -48,6 +48,15 @@ export default class PandaZapPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'sync-all-notes',
+      name: 'Sync all notes to Anki',
+      callback: () => {
+        const paths = this.app.vault.getMarkdownFiles().map((f) => f.path);
+        void this.openBatchSyncDialog(paths);
+      },
+    });
+
     this.addSettingTab(new PandaZapSettingTab(this.app, this));
 
     this.registerMarkdownPostProcessor((element, _context) => {
@@ -161,6 +170,11 @@ export default class PandaZapPlugin extends Plugin {
 
   async analyzeBatchSyncOperation(bContext: BatchSyncContext): Promise<SyncAnalysis> {
     this.ankiConnector.updateSettings(this.settings);
+    if (!(await this.ankiConnector.testConnection())) {
+      throw new Error(
+        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
+      );
+    }
     const allCardsToAdd: CardSyncInfo[] = [];
     const allCardsToUpdate: CardSyncInfo[] = [];
     const allCardsToDelete: CardSyncInfo[] = [];
@@ -170,7 +184,8 @@ export default class PandaZapPlugin extends Plugin {
       const analysis = await this.ankiConnector.analyzeSyncOperation(
         context.cards,
         context.notePath,
-        context.noteContent
+        context.noteContent,
+        true
       );
       totalCards += analysis.totalCards;
       const tag = (items: CardSyncInfo[]) =>
@@ -200,6 +215,11 @@ export default class PandaZapPlugin extends Plugin {
     confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>
   ): Promise<string[]> {
     this.ankiConnector.updateSettings(this.settings);
+    if (!(await this.ankiConnector.testConnection())) {
+      throw new Error(
+        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
+      );
+    }
     const results: string[] = [];
 
     for (const [notePath, context] of bContext.contexts) {
@@ -209,7 +229,8 @@ export default class PandaZapPlugin extends Plugin {
         notePath,
         context.noteContent,
         deleteConfirmed,
-        confirmedDeletionIdsByNote?.get(notePath)
+        confirmedDeletionIdsByNote?.get(notePath),
+        true
       );
       results.push(...noteResults);
     }

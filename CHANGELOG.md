@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-08-17
+- Sync every note in the vault at once: run "Panda Zap: Sync all notes to Anki" from the command palette.
+- Syncing several notes is faster because the connection to Anki is now checked once instead of for every note.
+- The removal confirmation now says how many notes are affected before cards are deleted.
+
 ## [1.0.10] - 2026-08-02
 - Syncing is noticeably faster when notes have lots of cards or when a deck already has many cards in Anki.
 - Large images now transfer without slowing the plugin down.

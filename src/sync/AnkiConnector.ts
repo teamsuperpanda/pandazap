@@ -51,7 +51,8 @@ export class AnkiConnector {
   async analyzeSyncOperation(
     cards: readonly AnkiCard[],
     notePath?: string,
-    noteContent?: string
+    noteContent?: string,
+    skipConnectionTest: boolean = false
   ): Promise<SyncAnalysis> {
     const analysis: SyncAnalysis = {
       cardsToAdd: [],
@@ -60,7 +61,7 @@ export class AnkiConnector {
       totalCards: cards.length,
     };
 
-    if (!(await this.testConnection())) {
+    if (!skipConnectionTest && !(await this.testConnection())) {
       throw new Error(
         'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
       );
@@ -184,9 +185,10 @@ export class AnkiConnector {
     notePath?: string,
     noteContent?: string,
     deleteConfirmed: boolean = false,
-    confirmedDeletionIds?: readonly string[]
+    confirmedDeletionIds?: readonly string[],
+    skipConnectionTest: boolean = false
   ): Promise<string[]> {
-    if (!(await this.testConnection())) {
+    if (!skipConnectionTest && !(await this.testConnection())) {
       throw new Error(
         'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
       );
@@ -293,7 +295,8 @@ export class AnkiConnector {
       try {
         const toDelete = confirmedDeletionIds
           ? [...new Set(confirmedDeletionIds.filter(Boolean))]
-          : (await this.analyzeSyncOperation(cards, notePath, noteContent)).cardsToDelete
+          : (await this.analyzeSyncOperation(cards, notePath, noteContent, skipConnectionTest))
+              .cardsToDelete
               .map((d) => d.existingCardId)
               .filter((id): id is string => Boolean(id));
         if (toDelete.length > 0) {
