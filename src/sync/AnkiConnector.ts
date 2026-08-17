@@ -295,8 +295,9 @@ export class AnkiConnector {
       try {
         const toDelete = confirmedDeletionIds
           ? [...new Set(confirmedDeletionIds.filter(Boolean))]
-          : (await this.analyzeSyncOperation(cards, notePath, noteContent, skipConnectionTest))
-              .cardsToDelete
+          : (
+              await this.analyzeSyncOperation(cards, notePath, noteContent, skipConnectionTest)
+            ).cardsToDelete
               .map((d) => d.existingCardId)
               .filter((id): id is string => Boolean(id));
         if (toDelete.length > 0) {
