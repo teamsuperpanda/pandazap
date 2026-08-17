@@ -42,7 +42,7 @@ export class SyncModal extends Modal {
     gearBtn.setAttr('title', 'Open plugin settings');
     gearBtn.onclick = () => this.openSettings();
 
-    header.createEl('h2', { text: 'Panda zap' });
+    header.createEl('h2', { text: 'Panda Zap' });
 
     // Render status and action containers immediately
     const statusContainer = contentEl.createDiv('panda-zap-status-container');

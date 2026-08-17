@@ -260,7 +260,6 @@ export class PandaZapSettingTab extends PluginSettingTab {
       if (isConnected) {
         this.connectionResultEl.className = 'panda-zap-connection-result connected';
         const connectedEl = this.connectionResultEl.createDiv('connection-content');
-        connectedEl.createSpan({ cls: 'connection-icon', text: 'connected' });
         connectedEl.createSpan({ cls: 'connection-text', text: 'Connected to Anki connect' });
         connectedEl.createSpan({
           cls: 'connection-details',
