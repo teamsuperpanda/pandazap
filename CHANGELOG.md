@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [1.1.1] - 2026-08-18
-- No user-facing changes. This release addresses the Obsidian community store review: cross-window safe type checks, timer functions, and a recognized license.
+- Fixed: "Panda Zap" now shows the proper capitalization in the sync modal.
 
 ## [1.1.0] - 2026-08-17
 - Sync every note in the vault at once: run "Panda Zap: Sync all notes to Anki" from the command palette.
