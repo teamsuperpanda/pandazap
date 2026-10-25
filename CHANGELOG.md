@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2] - 2026-10-25
+- Updated dependencies and build tooling to their latest compatible releases.
+- Fixed: corrected capitalization in the "No Markdown notes with cards found" notice.
+- Merged pending dependency update pull requests.
+
 ## [1.1.1] - 2026-08-18
 - Fixed: "Panda Zap" now shows the proper capitalization in the sync modal.
 

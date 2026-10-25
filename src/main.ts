@@ -71,7 +71,7 @@ export default class PandaZapPlugin extends Plugin {
   async openBatchSyncDialog(notePaths: string[]): Promise<void> {
     const bContext = await this.captureBatchSyncContext(notePaths);
     if (bContext.contexts.size === 0) {
-      new Notice('No markdown notes with cards found');
+      new Notice('No Markdown notes with cards found');
       return;
     }
     new SyncModal(this.app, this, bContext).open();
