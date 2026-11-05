@@ -413,7 +413,7 @@ export class AnkiConnector {
     const source = resolveImageSource(this.app, imagePath, notePath);
     if (!source) throw new Error(`Could not resolve image path: ${imagePath}`);
 
-    let base64 = '';
+    let base64: string;
     if (typeof source === 'string') {
       base64 = await downloadImageToBase64(source);
     } else if (source instanceof TFile) {

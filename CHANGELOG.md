@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+- Updated development dependencies to their latest compatible releases.
+- Fixed: security advisories GHSA-g3hv-75wg-m249 (minimatch) and GHSA-4p3w-j4w9-5jqw (moment) no longer affect the dependency tree.
+
 ## [1.1.2] - 2026-10-25
 - Updated dependencies and build tooling to their latest compatible releases.
 - Fixed: corrected capitalization in the "No Markdown notes with cards found" notice.

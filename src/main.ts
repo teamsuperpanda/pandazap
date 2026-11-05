@@ -99,7 +99,7 @@ export default class PandaZapPlugin extends Plugin {
 
     // DOM fallback: query highlighted file items
     const paths: string[] = [];
-    document.querySelectorAll('.nav-file.is-selected').forEach((el) => {
+    activeDocument.querySelectorAll('.nav-file.is-selected').forEach((el) => {
       const path = el.getAttribute('data-path');
       if (path && path.endsWith('.md')) paths.push(path);
     });

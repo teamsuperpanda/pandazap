@@ -15,6 +15,16 @@ function mediaFileHash(value: string): string {
   return `${stableHash(value)}${(second >>> 0).toString(36).padStart(7, '0')}`;
 }
 
+/**
+ * Attach the original error as `cause` while targeting ES2018, where the
+ * `ErrorOptions` argument is not part of the type library.
+ */
+function errorWithCause(message: string, cause: unknown): Error {
+  const error = new Error(message) as Error & { cause?: unknown };
+  error.cause = cause;
+  return error;
+}
+
 export function sanitizeMediaFilename(
   filename: string,
   notePath: string,
@@ -106,7 +116,7 @@ export async function readImageFileToBase64(app: App, file: TFile): Promise<stri
     return arrayBufferToBase64(arrayBuffer);
   } catch (e: unknown) {
     console.warn('PandaZap: failed to read image file', file.path, e);
-    throw new Error(`Failed to read image file: ${file.path}`);
+    throw errorWithCause(`Failed to read image file: ${file.path}`, e);
   }
 }
 
@@ -137,7 +147,7 @@ export async function downloadImageToBase64(url: string): Promise<string> {
   } catch (e: unknown) {
     console.warn('PandaZap: failed to download image', url, e);
     if (e instanceof Error) throw e;
-    throw new Error(`Failed to download image from ${url}`);
+    throw errorWithCause(`Failed to download image from ${url}`, e);
   }
 }
 

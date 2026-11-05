@@ -78,7 +78,7 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
   const lineState: Array<'normal' | 'frontmatter' | 'fenced'> = [];
   let inFrontmatter = false;
   let fenceCharacter: '`' | '~' | null = null;
-  let fenceLength = 0;
+  let fenceLength: number;
   let closingFence: RegExp | null = null;
 
   for (let k = 0; k < lines.length; k++) {
@@ -102,7 +102,6 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       lineState.push('fenced');
       if (closingFence?.test(lines[k])) {
         fenceCharacter = null;
-        fenceLength = 0;
         closingFence = null;
       }
       continue;
