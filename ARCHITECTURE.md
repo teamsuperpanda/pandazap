@@ -17,7 +17,8 @@ pandazap/
 │   │   └── SettingsTab.ts  # Settings UI using Obsidian 1.13+ getSettingDefinitions() API
 │   └── sync/               # Core sync engine
 │       ├── types.ts         # All TypeScript interfaces, enums, default settings
-│       ├── AnkiConnector.ts # AnkiConnect HTTP client: note cache, match/diff, image upload
+│       ├── AnkiConnectClient.ts # AnkiConnect transport: envelope, typed errors, retry/backoff
+│       ├── AnkiConnector.ts # AnkiConnect domain client: note cache, match/diff, image upload
 │       ├── CardExtractor.ts # Reading mode DOM post-processor
 │       ├── extractionUtils.ts # Core parser: extracts AnkiCard[] from Markdown text
 │       ├── hashUtils.ts     # FNV-1a hash -> 7-char base-36 for source tags
@@ -105,7 +106,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Name:** AnkiConnector
 
-**Description:** HTTP JSON-RPC client for the AnkiConnect add-on. Prefetches note cache via `findNotes` + `notesInfo`, compares field content with normalized matching (HTML entities, `<br>`/`<div>`/`<p>` to newline conversion), and categorizes cards into ADD, UPDATE, or DELETE actions. Handles image upload via `storeMediaFile` with filename collision prevention.
+**Description:** HTTP JSON-RPC client for the AnkiConnect add-on. `AnkiConnectClient` owns the transport: endpoint URL, timeout, envelope validation, typed `AnkiConnectError` failures, and retry/backoff for idempotent actions only (`addNote` and `storeMediaFile` are sent once). `AnkiConnector` owns the domain side: it prefetches the note cache via `findNotes` + `notesInfo`, compares field content with normalized matching (HTML entities, `<br>`/`<div>`/`<p>` to newline conversion), and categorizes cards into ADD, UPDATE, or DELETE actions. Handles image upload via `storeMediaFile` with filename collision prevention.
 
 **Technologies:** HTTP JSON-RPC 2.0, AnkiConnect v6 API
 

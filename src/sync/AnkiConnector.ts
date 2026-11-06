@@ -1,4 +1,4 @@
-import { App, TFile, requestUrl } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import {
   AnkiCard,
   PandaZapSettings,
@@ -6,7 +6,6 @@ import {
   CardSyncInfo,
   AnkiNoteInfo,
   AnkiCardInfo,
-  AnkiConnectResponse,
   NoteCacheEntry,
   AnkiConnectionState,
   SyncCardResult,
@@ -21,12 +20,11 @@ import {
   SYNC_HASH_TAG_PREFIX,
   MEDIA_FILENAME_PREFIX,
   REQUEST_TIMEOUT_MS,
-  RETRY_BACKOFF_BASE_MS,
 } from '../constants';
 import { buildAnkiConnectUrl } from '../settings';
 import { extractDeckOverride, extractQACardsFromText } from './extractionUtils';
 import { stableHash } from './hashUtils';
-import { withTimeout } from './requestTimeout';
+import { AnkiConnectClient, isNetworkError, isTimeoutError } from './AnkiConnectClient';
 import {
   resolveImageSource,
   readImageFileToBase64,
@@ -44,11 +42,15 @@ export class AnkiConnector {
     byFront: Map<string, NoteCacheEntry[]>;
   } | null = null;
   private cacheKey: string;
+  private client: AnkiConnectClient;
+  private clientEndpoint: string;
 
   constructor(settings: PandaZapSettings, app: App) {
     this.settings = settings;
     this.app = app;
     this.cacheKey = cacheKeyFor(settings);
+    this.clientEndpoint = buildAnkiConnectUrl(settings);
+    this.client = new AnkiConnectClient(this.clientEndpoint);
   }
 
   /**
@@ -64,6 +66,16 @@ export class AnkiConnector {
     if (!cacheStillValid) this.invalidateCache();
   }
 
+  /** The transport keeps the endpoint it was built with, so follow the settings. */
+  private clientForCurrentEndpoint(): AnkiConnectClient {
+    const endpoint = buildAnkiConnectUrl(this.settings);
+    if (endpoint !== this.clientEndpoint) {
+      this.clientEndpoint = endpoint;
+      this.client = new AnkiConnectClient(endpoint);
+    }
+    return this.client;
+  }
+
   /** Drop cached notes so the next lookup re-reads Anki. */
   invalidateCache(): void {
     this.noteCache = null;
@@ -71,8 +83,9 @@ export class AnkiConnector {
 
   async testConnection(): Promise<AnkiConnectionState> {
     try {
-      const version = await this.ankiConnectRequest('version');
-      if (typeof version !== 'number') return { status: 'protocol-error' };
+      const version = await this.clientForCurrentEndpoint().request('version', undefined, {
+        parse: parseVersion,
+      });
       if (version < ANKI_CONNECT_VERSION) return { status: 'version-too-old', version };
       return { status: 'ok', version };
     } catch (e: unknown) {
@@ -971,62 +984,11 @@ export class AnkiConnector {
     return extractDeckOverride(noteContent, this.settings.deckOverrideWord);
   }
 
-  private sleep(ms: number) {
-    return new Promise((resolve) => window.setTimeout(resolve, ms));
-  }
-
   private async ankiConnectRequest(
     action: string,
     params?: Record<string, unknown>
   ): Promise<unknown> {
-    const url = buildAnkiConnectUrl(this.settings);
-    const body = JSON.stringify({ action, version: ANKI_CONNECT_VERSION, params });
-    const timeoutMessage = `Anki Connect request "${action}" timed out after ${REQUEST_TIMEOUT_MS} ms. Make sure Anki is running with the AnkiConnect addon and that ${url} is reachable.`;
-
-    const MAX_RETRIES = 2;
-    const isIdempotent = action !== 'addNote' && action !== 'storeMediaFile';
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const response = await withTimeout(
-          requestUrl({
-            url,
-            method: 'POST',
-            contentType: 'application/json',
-            body,
-            throw: false,
-          }),
-          timeoutMessage
-        );
-
-        if (response.status < 200 || response.status >= 300) {
-          throw new Error(`Anki Connect HTTP ${response.status}`);
-        }
-        const data = response.json as AnkiConnectResponse;
-        if (
-          !data ||
-          typeof data !== 'object' ||
-          !Object.prototype.hasOwnProperty.call(data, 'result') ||
-          !Object.prototype.hasOwnProperty.call(data, 'error') ||
-          (data.error !== null && typeof data.error !== 'string')
-        ) {
-          throw new Error('Invalid response from Anki Connect');
-        }
-        if (data.error) {
-          throw new Error(data.error);
-        }
-        return data.result;
-      } catch (error: unknown) {
-        const shouldRetry =
-          (isNetworkError(error) || isTimeoutError(error)) && isIdempotent && attempt < MAX_RETRIES;
-        if (shouldRetry) {
-          const backoff = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt);
-          await this.sleep(backoff + Math.random() * (RETRY_BACKOFF_BASE_MS * 0.15));
-          continue;
-        }
-        throw error;
-      }
-    }
+    return this.clientForCurrentEndpoint().request(action, params);
   }
 }
 
@@ -1035,21 +997,14 @@ function ankiNoteId(note: AnkiNoteInfo): string {
   return String(note.noteId ?? note.noteIds?.[0] ?? note.id ?? '');
 }
 
-function isNetworkError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === 'TypeError' ||
-      error.message === 'Failed to fetch' ||
-      error.message.includes('net::'))
-  );
-}
-
-function isTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'TimeoutError';
-}
-
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+/** AnkiConnect's version probe must answer with a number. */
+function parseVersion(result: unknown): number {
+  if (typeof result !== 'number') throw new Error('Anki returned an invalid version');
+  return result;
 }
 
 function normalizeField(s: string): string {
