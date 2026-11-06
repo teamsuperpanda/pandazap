@@ -6,12 +6,15 @@ import {
   BatchSyncContext,
   createSyncContext,
   SyncResult,
+  SyncAbortToken,
+  SyncRunOptions,
   AnkiConnectionState,
   describeConnection,
   describeSyncModalStatus,
+  describeSyncResultNotice,
   formatSyncCardResult,
 } from '../sync/types';
-import { ANKI_CONNECT_VERSION } from '../constants';
+import { ANKI_CONNECT_VERSION, SYNC_PROGRESS_RENDER_INTERVAL_MS } from '../constants';
 import { PreviewModal } from './PreviewModal';
 import { markerLabels } from '../settings';
 
@@ -29,6 +32,10 @@ export class SyncModal extends Modal {
   private connection: AnkiConnectionState | null = null;
   private analysisError: string | null = null;
   private isSyncing: boolean = false;
+  /** True while the connector run is in flight, so close can be blocked. */
+  private syncRunning: boolean = false;
+  /** Set on close so no late await writes into a detached modal. */
+  private closed: boolean = false;
   private readonly syncContext: SyncContext;
   private readonly batchSyncContext?: BatchSyncContext;
   private readonly isBatchMode: boolean;
@@ -75,6 +82,7 @@ export class SyncModal extends Modal {
     // returned. Analysis failures are tracked separately and must not be
     // reported as a connection problem.
     this.connection = await this.plugin.testAnkiConnectionStatus();
+    if (this.closed) return;
     if (this.isConnected) {
       try {
         this.syncAnalysis = await this.runAnalysis();
@@ -82,6 +90,7 @@ export class SyncModal extends Modal {
         this.analysisError = errorMessage(error);
       }
     }
+    if (this.closed) return;
 
     // Update UI
     this.renderUi();
@@ -95,6 +104,7 @@ export class SyncModal extends Modal {
   }
 
   private renderUi() {
+    if (this.closed) return;
     const statusContainer = this.contentEl.querySelector('.panda-zap-status-container');
     const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
     const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
@@ -188,10 +198,12 @@ export class SyncModal extends Modal {
         testBtn.disabled = true;
         testBtn.textContent = 'Testing...';
         const state = await this.plugin.testAnkiConnectionStatus();
+        if (this.closed) return;
         if (state.status === 'ok') {
           new Notice('Connected to Anki!');
+          // Route through the plugin so the single-instance guard stays accurate.
           this.close();
-          new SyncModal(this.app, this.plugin, this.batchSyncContext).open();
+          this.plugin.showSyncModal(new SyncModal(this.app, this.plugin, this.batchSyncContext));
         } else {
           new Notice(describeConnection(state, ANKI_CONNECT_VERSION));
         }
@@ -324,13 +336,16 @@ export class SyncModal extends Modal {
       }
     } catch (error: unknown) {
       // restore UI elements so the user can try again
-      try {
-        const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
-        const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
-        if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.remove('hidden');
-        if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.remove('hidden');
-      } catch {
-        // ignore sync error
+      if (!this.closed) {
+        try {
+          const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
+          const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
+          if (summaryContainer?.instanceOf(HTMLElement))
+            summaryContainer.classList.remove('hidden');
+          if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.remove('hidden');
+        } catch {
+          // ignore sync error
+        }
       }
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`❌ Sync failed: ${errorMsg}`);
@@ -381,8 +396,14 @@ export class SyncModal extends Modal {
       );
     }
 
-    await this.hideUiAndSync(async () =>
-      this.plugin.syncCardsToAnki(false, deleteConfirmed, this.syncContext, confirmedDeletionIds)
+    await this.hideUiAndSync((runOptions) =>
+      this.plugin.syncCardsToAnki(
+        false,
+        deleteConfirmed,
+        this.syncContext,
+        confirmedDeletionIds,
+        runOptions
+      )
     );
   }
 
@@ -436,31 +457,83 @@ export class SyncModal extends Modal {
       );
     }
 
-    await this.hideUiAndSync(async () =>
-      this.plugin.syncBatchCards(bContext, false, deleteConfirmed, confirmedDeletionIdsByNote)
+    await this.hideUiAndSync((runOptions) =>
+      this.plugin.syncBatchCards(
+        bContext,
+        false,
+        deleteConfirmed,
+        confirmedDeletionIdsByNote,
+        runOptions
+      )
     );
   }
 
-  private async hideUiAndSync(syncFn: () => Promise<SyncResult>) {
+  private async hideUiAndSync(syncFn: (runOptions: SyncRunOptions) => Promise<SyncResult>) {
     // Hide summary and action buttons now that the user has confirmed (or there were no deletions)
     const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
     const buttonContainerEl = this.contentEl.querySelector('.panda-zap-button-container');
     const resultContainer = this.contentEl.querySelector('.panda-zap-results');
     if (summaryContainer?.instanceOf(HTMLElement)) summaryContainer.classList.add('hidden');
     if (buttonContainerEl?.instanceOf(HTMLElement)) buttonContainerEl.classList.add('hidden');
+
+    const abort: SyncAbortToken = { cancelled: false };
+    let done = 0;
+    let total = 0;
+    let lastRender = 0;
+    let progressText: HTMLSpanElement | null = null;
+
     if (resultContainer?.instanceOf(HTMLElement)) {
       resultContainer.classList.remove('hidden');
       resultContainer.classList.add('visible');
       resultContainer.empty();
-      const loadingList = resultContainer.createDiv('panda-zap-results-list');
-      const loadingItem = loadingList.createDiv('panda-zap-result-item');
-      loadingItem.createSpan({ text: 'Syncing...' });
+      const progressRow = resultContainer.createDiv('panda-zap-result-item');
+      progressText = progressRow.createSpan({ text: 'Syncing...' });
+      const cancelRow = resultContainer.createDiv('panda-zap-button-group');
+      const cancelBtn = cancelRow.createEl('button', {
+        text: 'Cancel',
+        cls: 'panda-zap-btn panda-zap-btn-tertiary',
+      });
+      cancelBtn.onclick = () => {
+        abort.cancelled = true;
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Cancelling...';
+      };
     }
 
+    const onProgress = (processed: number, cardTotal: number) => {
+      done = processed;
+      total = cardTotal;
+      const now = Date.now();
+      // A layout update per card costs more than the sync on large runs, so
+      // intermediate counts are throttled and the final count always renders.
+      if (processed < cardTotal && now - lastRender < SYNC_PROGRESS_RENDER_INTERVAL_MS) return;
+      lastRender = now;
+      if (this.closed || !progressText) return;
+      progressText.textContent = `Processed ${processed} / ${cardTotal} cards`;
+    };
+
     new Notice('Syncing cards to Anki...');
-    const result = await syncFn();
-    const finalResultContainer = this.contentEl.querySelector('.panda-zap-results');
-    if (!finalResultContainer?.instanceOf(HTMLElement)) return;
+    let result: SyncResult;
+    this.syncRunning = true;
+    try {
+      result = await syncFn({ abort, onProgress });
+    } finally {
+      this.syncRunning = false;
+    }
+
+    const notice = describeSyncResultNotice(
+      result,
+      abort.cancelled ? { done, total, cancelled: true } : undefined
+    );
+    const finalResultContainer = this.closed
+      ? null
+      : this.contentEl.querySelector('.panda-zap-results');
+    if (!finalResultContainer?.instanceOf(HTMLElement)) {
+      // Closing is blocked while a run is in flight, so this only guards
+      // teardown. The outcome still reaches the user instead of being lost.
+      new Notice(notice);
+      return;
+    }
     finalResultContainer.classList.remove('hidden');
     finalResultContainer.classList.add('visible');
     finalResultContainer.empty();
@@ -531,30 +604,7 @@ export class SyncModal extends Modal {
       });
     }
 
-    const total = result.cards.length;
-    const succeeded = result.cards.filter(
-      (card) => card.status === 'added' || card.status === 'updated'
-    ).length;
-    const failed = result.cards.filter(
-      (card) => card.status === 'failed' || card.status === 'image-failed'
-    ).length;
-    const deleted = result.deletion && !result.deletion.failed ? result.deletion.deletedCount : 0;
-    const deletionNote = deleted > 0 ? `, ${deleted} deleted` : '';
-    const deletionFailedNote = result.deletion?.failed ? '; deletion failed' : '';
-
-    if (total > 0 && failed === total) {
-      new Notice(
-        `Sync failed: ${failed} of ${total} cards failed${deletionNote}${deletionFailedNote}`
-      );
-    } else if (failed > 0 || result.deletion?.failed) {
-      new Notice(
-        `Sync completed with issues: ${succeeded} succeeded, ${failed} failed, ${skipped.length} skipped${deletionNote}${deletionFailedNote}`
-      );
-    } else {
-      new Notice(
-        `Sync completed: ${succeeded} succeeded, ${skipped.length} skipped${deletionNote}`
-      );
-    }
+    new Notice(notice);
   }
 
   private openSettings() {
@@ -564,7 +614,21 @@ export class SyncModal extends Modal {
     appWithSetting.setting.openTabById(this.plugin.manifest.id);
   }
 
+  /**
+   * Closing mid-sync would detach the progress UI while Anki keeps changing,
+   * so the run must be cancelled first.
+   */
+  close(): void {
+    if (this.syncRunning) {
+      new Notice('Cancel the sync first');
+      return;
+    }
+    super.close();
+  }
+
   onClose() {
+    this.closed = true;
+    this.plugin.clearActiveSyncModal(this);
     const { contentEl } = this;
     contentEl.empty();
   }

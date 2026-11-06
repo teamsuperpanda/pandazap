@@ -11,6 +11,7 @@ import {
   AnkiConnectionState,
   SyncCardResult,
   SyncResult,
+  SyncRunOptions,
   describeConnection,
 } from './types';
 import {
@@ -232,7 +233,8 @@ export class AnkiConnector {
     noteContent?: string,
     deleteConfirmed: boolean = false,
     confirmedDeletionIds?: readonly string[],
-    skipConnectionTest: boolean = false
+    skipConnectionTest: boolean = false,
+    runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     if (!skipConnectionTest) {
       const connection = await this.testConnection();
@@ -243,7 +245,13 @@ export class AnkiConnector {
 
     const results: SyncCardResult[] = [];
     const deckName = this.getDeckName(notePath, noteContent);
-    if (this.settings.useNoteBased && notePath && !preview && cards.length > 0) {
+    const totalCards = cards.length;
+    let processedCards = 0;
+    runOptions?.onProgress?.(processedCards, totalCards);
+
+    const isCancelled = () => runOptions?.abort?.cancelled === true;
+
+    if (this.settings.useNoteBased && notePath && !preview && cards.length > 0 && !isCancelled()) {
       try {
         await this.ankiConnectRequest('createDeck', {
           deck: deckName,
@@ -254,6 +262,8 @@ export class AnkiConnector {
     }
 
     for (const card of cards) {
+      // Checked between cards so a cancel stops before the next Anki mutation.
+      if (isCancelled()) break;
       try {
         if (!card.answer && !card.image) {
           results.push({ card, status: 'failed', reason: 'missing answer and image' });
@@ -326,12 +336,17 @@ export class AnkiConnector {
       } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
         results.push({ card, status: 'failed', reason: msg });
+      } finally {
+        processedCards += 1;
+        runOptions?.onProgress?.(processedCards, totalCards);
       }
     }
 
     const result: SyncResult = { cards: results };
 
-    if (!preview && deleteConfirmed && notePath) {
+    // A cancellation stops before a delete that has not started. Notes deleted
+    // by an earlier note in a batch keep their result.
+    if (!preview && deleteConfirmed && notePath && !isCancelled()) {
       try {
         const toDelete = confirmedDeletionIds
           ? [...new Set(confirmedDeletionIds.filter(Boolean))]
