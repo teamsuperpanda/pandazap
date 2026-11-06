@@ -127,11 +127,13 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 ## 4. Module Boundary Convention
 
 - **`src/main.ts`** — Plugin entry point. Registers ribbon icon, commands, settings tab, and Markdown post-processor. Delegates sync operations.
-- **`src/sync/`** — Core sync engine. Contains all business logic for extraction, Anki communication, image handling, and hashing. No Obsidian UI imports.
+- **`src/sync/`** — Core sync engine. Contains all business logic for extraction, Anki communication, image handling, and hashing. Uses Obsidian's `App`, `MarkdownView` and `Notice` APIs but imports no dialogs.
 - **`src/dialogs/`** — Modal UI components using Obsidian's `Modal` base class. Imports from `sync/` for data.
 - **`src/constants.ts`** — App-wide magic values and configuration defaults.
 
-**Dependency rule:** `dialogs/` may import from `sync/`. `sync/` never imports from `dialogs/`. `main.ts` imports from both.
+**Dependency rule (intended):** `dialogs/` and `sync/` should not import from `main.ts`; `main.ts` imports from both. `dialogs/` may import from `sync/`, and `sync/` should not import from `dialogs/`.
+
+**Known exceptions:** circular imports with `main.ts` currently exist for `dialogs/SyncModal.ts`, `dialogs/SettingsTab.ts` and `sync/CardExtractor.ts` (each imports `PandaZapPlugin` from `../main` for settings access and typing). They are tolerated today but violate the rule above.
 
 ## 5. Data Stores
 
@@ -139,7 +141,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Name:** Obsidian Plugin Data (`data.json`)
 
-**Type:** JSON file in `.obsidian/plugins/panda-zap/`
+**Type:** JSON file in `.obsidian/plugins/pandazap/`
 
 **Purpose:** Persists `PandaZapSettings` via Obsidian's `Plugin.loadData()` / `Plugin.saveData()` API.
 
@@ -163,8 +165,9 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 ## 6. External Integrations / APIs
 
-- **AnkiConnect:** Local HTTP JSON-RPC on `127.0.0.1:8765` (version 6). Required runtime dependency — must be installed separately as an Anki add-on.
-- **No external network requests:** All communication is localhost only. No telemetry, no analytics.
+- **AnkiConnect:** HTTP JSON-RPC (version 6). Required runtime dependency — must be installed separately as an Anki add-on. Defaults to `127.0.0.1:8765`; the host and port are configurable, so a remote AnkiConnect is supported.
+- **Remote images:** When a card references an image by `http(s)://` URL, the plugin downloads it from that URL (`src/sync/imageUtils.ts`) before uploading it to Anki media. The request goes to the URL in the note, not to a Panda Zap service.
+- **No telemetry:** No analytics, crash reporting, or other outbound requests by the plugin itself.
 
 ## 7. Deployment & Infrastructure
 
@@ -178,7 +181,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 ## 8. Security Considerations
 
-- **Local only:** All communication is on `127.0.0.1:8765` — no data leaves the machine
+- **Network scope:** AnkiConnect defaults to `127.0.0.1:8765`; if the configured host points elsewhere, card fields and metadata go to that host. Remote image URLs referenced by notes are fetched over http(s)
 - **No encryption:** Plugin data and Anki data are local files with OS-level access controls
 - **No authentication:** AnkiConnect has no auth by default; assumes trusted local environment
 - **Image safety:** Only http/https URLs and local vault files accepted for image embedding
@@ -186,7 +189,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 ## 9. Development & Testing
 
-- **Testing:** Vitest 4.1 with v8 coverage (~10 test files). Mocking via `vi.mock()` and `vi.fn()`.
+- **Testing:** Vitest 5.1 with v8 coverage (~10 test files). Mocking via `vi.mock()` and `vi.fn()`.
 - **Linting:** ESLint 10 + `eslint-plugin-obsidianmd` + TypeScript rules
 - **Formatting:** Prettier 3.8
 - **Type checking:** `tsc --noEmit`

@@ -18,7 +18,7 @@
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "dev": "node esbuild.config.mjs --watch",
     "test": "vitest",
-    "lint": "eslint src",
+    "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "format:check": "prettier --check \"src/**/*.ts\""
   },

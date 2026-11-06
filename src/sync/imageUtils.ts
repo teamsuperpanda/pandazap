@@ -158,5 +158,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
   }
+  // AnkiConnect storeMediaFile expects base64 here; this is payload encoding, not obfuscation.
   return btoa(binary);
 }

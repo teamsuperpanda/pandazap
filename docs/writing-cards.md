@@ -174,7 +174,7 @@ By default, cards go to a deck named after your note's folder and filename. You 
 | -------- | ------ | ------- |
 | 1 | First-line override | `Deck::Biology/Plants` on the very first line |
 | 2 | Folder-based (if enabled) | `Biology/Plants/Photosynthesis.md` becomes deck `Biology/Plants::Photosynthesis` |
-| 3 | Default deck setting | The deck you set in plugin settings |
+| 3 | Default deck | The `defaultDeck` value in the plugin's `data.json` (default: `Default`) |
 
 ### Deck override on first line
 
@@ -186,6 +186,8 @@ Q: Hello A: Hola
 Q: Goodbye A: Adios
 Q: Thank you A: Gracias
 ```
+
+A leading YAML frontmatter block means the `Deck::` line is no longer first, so the override is ignored.
 
 Use slashes for nested decks:
 

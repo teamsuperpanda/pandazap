@@ -79,14 +79,13 @@ export class CardExtractor {
       const applyTransform = (tn: Text) => {
         const parent = tn.parentNode;
         const text = tn.nodeValue ?? '';
-        const frag = container.ownerDocument.createDocumentFragment();
+        const frag = createFragment();
 
         const appendSegment = (segment: string, question: boolean) => {
           if (!segment) return;
           if (boldQuestion && question) {
-            const strong = container.ownerDocument.createElement('strong');
-            strong.textContent = segment;
-            frag.appendChild(strong);
+            const strong = frag.createEl('strong');
+            strong.setText(segment);
           } else {
             frag.appendChild(container.ownerDocument.createTextNode(segment));
           }
