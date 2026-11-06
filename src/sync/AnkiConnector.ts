@@ -24,7 +24,18 @@ import {
   RETRY_BACKOFF_BASE_MS,
 } from '../constants';
 import { buildAnkiConnectUrl } from '../settings';
-import { extractDeckOverride, extractQACardsFromText } from './extractionUtils';
+import { extractQACardsFromText } from './extractionUtils';
+import { deckNameFromPath, resolveDeckName } from './deckNaming';
+import {
+  canUseLegacySourceTag,
+  eligibleSourceTags,
+  legacySourceTag,
+  sourceTag,
+  sourceTags,
+  type SourceTagContext,
+} from './sourceTags';
+import { parseNoteHeader } from './noteHeader';
+import { fieldsMatch, normalizeField, normalizeHtmlField } from './fieldComparison';
 import { stableHash } from './hashUtils';
 import { withTimeout } from './requestTimeout';
 import {
@@ -198,20 +209,20 @@ export class AnkiConnector {
         return existingNoteIds.map(String);
       };
 
-      const sourceTags =
+      const tagsInPlay =
         cards.length === 0
-          ? [this.getSourceTag(notePath)]
-          : this.getEligibleSourceTags(notePath, deckName, noteContent);
+          ? [sourceTag(notePath)]
+          : this.eligibleTags(notePath, deckName, noteContent);
       const noteIds = new Set<string>();
-      for (const sourceTag of sourceTags) {
+      for (const tag of tagsInPlay) {
         // An emptied note may have lost its `Deck::` line or had the default deck
         // changed, so a deck filter would hide the notes it still owns. Its exact
         // source tag is unique per note and safe to match across decks; the
         // legacy tag can be shared, so it stays out of this path.
         const query =
           cards.length === 0
-            ? `tag:${PLUGIN_TAG} tag:${sourceTag}`
-            : `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
+            ? `tag:${PLUGIN_TAG} tag:${tag}`
+            : `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${tag}`;
         for (const noteId of await findNotes(query)) noteIds.add(noteId);
       }
 
@@ -223,7 +234,7 @@ export class AnkiConnector {
 
         for (const ni of notesInfo) {
           try {
-            if (!ni.tags?.some((tag) => sourceTags.includes(tag))) continue;
+            if (!ni.tags?.some((tag) => tagsInPlay.includes(tag))) continue;
             const front = ni.fields?.Front?.value?.trim() ?? '';
             const back = ni.fields?.Back?.value?.trim() ?? '';
             if (front && !extractedQuestions.has(normalizeField(front))) {
@@ -347,7 +358,7 @@ export class AnkiConnector {
                 tags: [
                   'panda-zap',
                   'obsidian',
-                  ...(notePath ? [this.getSourceTag(notePath)] : []),
+                  ...(notePath ? [sourceTag(notePath)] : []),
                   this.syncTagFor(card.question, finalBack),
                 ],
               },
@@ -494,11 +505,11 @@ export class AnkiConnector {
     // note that may belong to another source.
     if (!notePath) return undefined;
 
-    const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
-    const exact = entries.find((entry) => entry.raw.tags?.includes(sourceTag));
+    const [hashedTag, legacyTag] = sourceTags(notePath);
+    const exact = entries.find((entry) => entry.raw.tags?.includes(hashedTag));
     if (exact) return exact;
-    if (this.canUseLegacySourceTag(notePath, deckName, noteContent)) {
-      const legacy = entries.find((entry) => entry.raw.tags?.includes(legacySourceTag));
+    if (canUseLegacySourceTag(this.sourceTagContext(notePath, deckName ?? '', noteContent))) {
+      const legacy = entries.find((entry) => entry.raw.tags?.includes(legacyTag));
       if (legacy) return legacy;
     }
     return undefined;
@@ -515,9 +526,11 @@ export class AnkiConnector {
     syncTag: string
   ): Promise<void> {
     const currentTags = cached.raw.tags ?? [];
-    const sourceTag = notePath ? this.getSourceTag(notePath) : undefined;
+    const noteSourceTag = notePath ? sourceTag(notePath) : undefined;
     const withoutSyncTag = currentTags.filter((tag) => !tag.startsWith(SYNC_HASH_TAG_PREFIX));
-    const tags = [...new Set([...withoutSyncTag, ...(sourceTag ? [sourceTag] : []), syncTag])];
+    const tags = [
+      ...new Set([...withoutSyncTag, ...(noteSourceTag ? [noteSourceTag] : []), syncTag]),
+    ];
     if (tags.length === currentTags.length && tags.every((tag, i) => tag === currentTags[i])) {
       return;
     }
@@ -546,20 +559,16 @@ export class AnkiConnector {
     toPath: string,
     toContent?: string
   ): Promise<SourceTagMigrationResult> {
-    const toTag = this.getSourceTag(toPath);
-    const hashedOldTag = this.getSourceTag(fromPath);
+    const toTag = sourceTag(toPath);
+    const hashedOldTag = sourceTag(fromPath);
     if (hashedOldTag === toTag) return { migrated: 0, unresolvedLegacy: false };
-    const legacyOldTag = this.getLegacySourceTag(fromPath);
+    const legacyOldTag = legacySourceTag(fromPath);
     // A rename does not edit the note, so the renamed file's content is also the
     // old content and its `Deck::` override applies to the old path.
     const oldDeck = this.getDeckName(fromPath, toContent);
     const newDeck = this.getDeckName(toPath, toContent);
     // Same rule a normal sync uses before trusting a truncated legacy tag.
-    const searchLegacy = this.getEligibleSourceTags(
-      fromPath,
-      this.getDeckName(fromPath, toContent),
-      toContent
-    ).includes(legacyOldTag);
+    const searchLegacy = this.eligibleTags(fromPath, oldDeck, toContent).includes(legacyOldTag);
 
     const ownedIds = new Set(await this.findPluginNotes(`tag:${PLUGIN_TAG} tag:${hashedOldTag}`));
     // The legacy tag can name several deep siblings, so only the deck the old
@@ -576,7 +585,7 @@ export class AnkiConnector {
     })) as AnkiNoteInfo[];
     if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
 
-    const defaultDeckMode = !this.settings.useNoteBased && !this.getDeckOverride(toContent);
+    const defaultDeckMode = !this.settings.useNoteBased && !this.deckOverrideFor(toContent);
     const migrationOptions = {
       oldDeck,
       newDeck,
@@ -758,9 +767,9 @@ export class AnkiConnector {
    */
   async hasNotesForSourceTag(notePath: string, noteContent?: string): Promise<boolean> {
     const deckName = this.getDeckName(notePath, noteContent);
-    const sourceTags = new Set(this.getEligibleSourceTags(notePath, deckName, noteContent));
-    for (const sourceTag of sourceTags) {
-      const noteIds = await this.findPluginNotes(`tag:${PLUGIN_TAG} tag:${sourceTag}`);
+    const tagsInPlay = new Set(this.eligibleTags(notePath, deckName, noteContent));
+    for (const tag of tagsInPlay) {
+      const noteIds = await this.findPluginNotes(`tag:${PLUGIN_TAG} tag:${tag}`);
       if (noteIds.length > 0) return true;
     }
     return false;
@@ -891,84 +900,37 @@ export class AnkiConnector {
     this.noteCache = noteCache;
   }
 
-  private getDeckNameFromPath(notePath?: string): string {
-    if (!notePath) return '';
-
-    const pathParts = notePath.split('/');
-    const noteNameWithExt = pathParts.pop() || 'Unknown';
-    const noteName = noteNameWithExt.replace(/\.md$/, '');
-    const folderPath = pathParts.length > 0 ? pathParts.join('/') : '';
-
-    if (folderPath) {
-      return `${folderPath}::${noteName}`;
-    } else {
-      return noteName;
-    }
-  }
-
   private getDeckName(notePath?: string, noteContent?: string): string {
-    const deckOverride = this.getDeckOverride(noteContent);
-    if (deckOverride) return deckOverride;
-
-    if (!this.settings.useNoteBased || !notePath) {
-      return this.settings.defaultDeck;
-    }
-
-    return this.getDeckNameFromPath(notePath);
+    return resolveDeckName({
+      useNoteBased: this.settings.useNoteBased,
+      defaultDeck: this.settings.defaultDeck,
+      notePath,
+      deckOverride: this.deckOverrideFor(noteContent),
+    });
   }
 
-  private getSourceTag(notePath: string): string {
-    const legacyTag = this.getLegacySourceTag(notePath);
-    const hash = stableHash(notePath.replace(/\\/g, '/'));
-    return `${legacyTag.slice(0, 80 - hash.length - 1)}_${hash}`;
-  }
-
-  private getLegacySourceTag(notePath: string): string {
-    const s = notePath.replace(/[/\\]/g, '_').replace(/[\s,]+/g, '_');
-    return `source:${s}`.slice(0, 80);
-  }
-
-  private getSourceTags(notePath: string): [string, string] {
-    return [this.getSourceTag(notePath), this.getLegacySourceTag(notePath)];
-  }
-
-  private getEligibleSourceTags(
+  /** Owning context for the source-tag policy, which is pure and lives in its own module. */
+  private sourceTagContext(
     notePath: string,
     deckName: string,
     noteContent?: string
-  ): string[] {
-    const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
-    return this.canUseLegacySourceTag(notePath, deckName, noteContent)
-      ? [sourceTag, legacySourceTag]
-      : [sourceTag];
+  ): SourceTagContext {
+    return {
+      notePath,
+      useNoteBased: this.settings.useNoteBased,
+      deckName,
+      notePathDeck: deckNameFromPath(notePath),
+      deckOverride: this.deckOverrideFor(noteContent),
+    };
   }
 
-  /**
-   * A legacy tag can be truncated before the unique part of a long path. It is
-   * therefore only authoritative when the note's path also determines a unique
-   * deck. A deck override can place multiple source notes in one shared deck.
-   */
-  private canUseLegacySourceTag(
-    notePath: string,
-    deckName?: string,
-    noteContent?: string
-  ): boolean {
-    if (!this.settings.useNoteBased) return false;
-    if (this.isLegacySourceTagLossless(notePath)) return true;
-    return (
-      Boolean(deckName && deckName === this.getDeckNameFromPath(notePath)) &&
-      !this.getDeckOverride(noteContent)
-    );
+  private eligibleTags(notePath: string, deckName: string, noteContent?: string): string[] {
+    return eligibleSourceTags(this.sourceTagContext(notePath, deckName, noteContent));
   }
 
-  private isLegacySourceTagLossless(notePath: string): boolean {
-    const normalized = notePath.replace(/[/\\]/g, '_').replace(/[\s,]+/g, '_');
-    return `source:${normalized}`.length <= 80;
-  }
-
-  private getDeckOverride(noteContent?: string): string | undefined {
+  private deckOverrideFor(noteContent?: string): string | undefined {
     if (!noteContent) return undefined;
-    return extractDeckOverride(noteContent, this.settings.deckOverrideWord);
+    return parseNoteHeader(noteContent, this.settings.deckOverrideWord).deckOverride;
   }
 
   private sleep(ms: number) {
@@ -1052,10 +1014,6 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-function normalizeField(s: string): string {
-  return (s || '').toString().trim();
-}
-
 /** Settings that change which notes a cached deck lookup would return. */
 function cacheKeyFor(settings: PandaZapSettings): string {
   return [
@@ -1065,25 +1023,4 @@ function cacheKeyFor(settings: PandaZapSettings): string {
     settings.defaultDeck,
     settings.deckOverrideWord,
   ].join('\0');
-}
-
-function normalizeHtmlField(value: string): string {
-  let result = value.trim();
-  result = result.replace(/&nbsp;/g, ' ');
-  result = result.replace(/&amp;/g, '&');
-  result = result.replace(/&lt;/g, '<');
-  result = result.replace(/&gt;/g, '>');
-  result = result.replace(/&quot;/g, '"');
-  result = result.replace(/<br\s*\/?>/gi, '\n');
-  result = result.replace(/<\/?div>/gi, '\n');
-  result = result.replace(/<\/?p>/gi, '\n');
-  result = result.replace(/<\/?span[^>]*>/gi, '');
-  result = result.replace(/\r\n/g, '\n');
-  result = result.replace(/\n{3,}/g, '\n\n');
-  result = result.trim();
-  return result;
-}
-
-function fieldsMatch(a: string, b: string): boolean {
-  return normalizeHtmlField(a) === normalizeHtmlField(b);
 }

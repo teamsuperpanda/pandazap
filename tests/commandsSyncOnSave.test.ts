@@ -107,6 +107,7 @@ import PandaZapPlugin from '../src/main';
 import { MarkdownView, TFile } from 'obsidian';
 import type { Menu, TAbstractFile } from 'obsidian';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
+import { legacySourceTag, sourceTag } from '../src/sync/sourceTags';
 import {
   DEFAULT_SETTINGS,
   createSyncContext,
@@ -638,16 +639,14 @@ describe('sync on save', () => {
   it('never deletes Anki notes in silent mode', async () => {
     const settings: PandaZapSettings = { ...DEFAULT_SETTINGS, useNoteBased: false };
     const connector = new AnkiConnector(settings, {} as never);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'note.md'
-    );
+    const noteTag = sourceTag('note.md');
     const anki: FakeAnkiState = installFakeAnki(requestUrl, {
       notes: [
         {
           noteId: '1',
           front: 'Q1',
           back: 'A1',
-          tags: ['panda-zap', sourceTag],
+          tags: ['panda-zap', noteTag],
           cards: [10],
         },
         {
@@ -655,7 +654,7 @@ describe('sync on save', () => {
           noteId: '2',
           front: 'Stale',
           back: 'Old answer',
-          tags: ['panda-zap', sourceTag],
+          tags: ['panda-zap', noteTag],
           cards: [11],
         },
       ],
@@ -685,16 +684,14 @@ describe('sync on save', () => {
       overwriteAnkiEdits: true,
     };
     const connector = new AnkiConnector(settings, {} as never);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'note.md'
-    );
+    const noteTag = sourceTag('note.md');
     const anki = installFakeAnki(requestUrl, {
       notes: [
         {
           noteId: '1',
           front: 'Q1',
           back: 'Edited in Anki',
-          tags: ['panda-zap', sourceTag, syncTagFor(connector, 'Q1', 'A1')],
+          tags: ['panda-zap', noteTag, syncTagFor(connector, 'Q1', 'A1')],
           cards: [10],
         },
       ],
@@ -910,9 +907,7 @@ describe('sync on save', () => {
   it('accepts notes carrying only the trusted legacy source tag', async () => {
     const settings: PandaZapSettings = { ...DEFAULT_SETTINGS, useNoteBased: true };
     const connector = new AnkiConnector(settings, {} as never);
-    const legacyTag = (
-      connector as unknown as { getLegacySourceTag(path: string): string }
-    ).getLegacySourceTag('note.md');
+    const legacyTag = legacySourceTag('note.md');
     installFakeAnki(requestUrl, {
       notes: [
         {

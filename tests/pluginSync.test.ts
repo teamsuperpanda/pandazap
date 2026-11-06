@@ -31,6 +31,7 @@ vi.mock('../src/dialogs/SettingsTab', () => ({ PandaZapSettingTab: class {} }));
 import PandaZapPlugin from '../src/main';
 import { SyncModal } from '../src/dialogs/SyncModal';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
+import { sourceTag } from '../src/sync/sourceTags';
 import {
   DEFAULT_SETTINGS,
   createBatchSyncContext,
@@ -201,9 +202,7 @@ describe('batch sync of an emptied note', () => {
   it('does not delete notes that were not confirmed in the batch', async () => {
     requestUrl.mockReset();
     const connector = new AnkiConnector({ ...DEFAULT_SETTINGS, useNoteBased: false }, {} as never);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'one.md'
-    );
+    const noteTag = sourceTag('one.md');
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = JSON.parse(options.body) as { action: string };
       if (request.action === 'version') return { status: 200, json: { result: 6, error: null } };
@@ -218,7 +217,7 @@ describe('batch sync of an emptied note', () => {
               {
                 noteId: '11',
                 fields: { Front: { value: 'Stale' }, Back: { value: 'answer' } },
-                tags: [sourceTag],
+                tags: [noteTag],
               },
             ],
             error: null,
