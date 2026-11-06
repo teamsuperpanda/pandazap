@@ -6,13 +6,6 @@ interface CommandLike {
   checkCallback?: (checking: boolean) => boolean;
 }
 
-interface StatusBarState {
-  text: string;
-  attributes: Record<string, string>;
-  classes: Set<string>;
-  created: number;
-}
-
 const {
   requestUrl,
   notices,
@@ -114,9 +107,17 @@ import PandaZapPlugin from '../src/main';
 import { MarkdownView, TFile } from 'obsidian';
 import type { Menu, TAbstractFile } from 'obsidian';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
-import { DEFAULT_SETTINGS, createSyncContext, type PandaZapSettings } from '../src/sync/types';
+import {
+  DEFAULT_SETTINGS,
+  createSyncContext,
+  type PandaZapSettings,
+  type SyncRunOptions,
+} from '../src/sync/types';
 import { SYNC_ON_SAVE_DEBOUNCE_MS } from '../src/constants';
 import { installFakeAnki, type FakeAnkiState } from './fakeAnki';
+
+/** The abort token a sync run is given; the cast keeps the nested matcher typed. */
+const expectedAbort = expect.objectContaining({ cancelled: false }) as SyncRunOptions['abort'];
 
 type VaultHandler = (file: TAbstractFile) => void;
 type FileMenuHandler = (menu: unknown, file: TAbstractFile) => void;
@@ -355,7 +356,7 @@ describe('sync current note command', () => {
       false,
       undefined,
       true,
-      expect.objectContaining({ abort: expect.objectContaining({ cancelled: false }) })
+      expect.objectContaining({ abort: expectedAbort })
     );
     expect(notices[notices.length - 1]).toBe('Sync completed: 1 succeeded, 0 skipped');
   });
@@ -392,7 +393,7 @@ describe('sync current note command', () => {
       true,
       ['1'],
       true,
-      expect.objectContaining({ abort: expect.objectContaining({ cancelled: false }) })
+      expect.objectContaining({ abort: expectedAbort })
     );
   });
 
@@ -530,7 +531,10 @@ describe('file menu sync entry', () => {
     entries[0].onClick?.();
 
     await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(2));
-    expect(connector.syncCards.mock.calls.map((call) => call[1])).toEqual(['one.md', 'two.md']);
+    expect(connector.syncCards.mock.calls.map((call: unknown[]) => call[1])).toEqual([
+      'one.md',
+      'two.md',
+    ]);
     expect(openSyncModal).not.toHaveBeenCalled();
   });
 

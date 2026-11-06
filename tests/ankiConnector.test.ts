@@ -40,6 +40,12 @@ function requests(action: string) {
     .filter((request) => request.action === action);
 }
 
+/** The findNotes query of a request, as the connector sent it. */
+function queryOf(request: { params?: Record<string, unknown> }): string {
+  const query = request.params?.query;
+  return typeof query === 'string' ? query : '';
+}
+
 function deckLookups(deckName: string) {
   return requests('findNotes').filter(
     (request) => request.params?.query === `deck:"${deckName}" tag:panda-zap`
@@ -373,7 +379,7 @@ describe('AnkiConnector', () => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') {
-        const query = String(request.params?.query);
+        const query = queryOf(request);
         return response(query.includes(`tag:${mineTag}`) ? ['11'] : ['11', '22']);
       }
       if (request.action === 'notesInfo') {
@@ -422,7 +428,7 @@ describe('AnkiConnector', () => {
 
     // The note was synced in a note-based deck earlier; its Deck:: line is gone.
     const analysis = await connector.analyzeSyncOperation([], 'mine.md', 'Nothing left here');
-    const queries = requests('findNotes').map((request) => String(request.params?.query));
+    const queries = requests('findNotes').map(queryOf);
     // One exact-tag lookup: no deck filter and no shared legacy tag.
     expect(queries).toEqual([`tag:panda-zap tag:${sourceTag}`]);
     expect(queries.join(' ')).not.toContain('deck:');
@@ -613,7 +619,7 @@ describe('AnkiConnector', () => {
       if (request.action === 'findNotes') {
         // The source-scoped deletion lookup sees nothing to delete here, so the
         // deck cache stays the only notesInfo lookup.
-        const query = String(request.params?.query);
+        const query = queryOf(request);
         return response(query.includes(`tag:${sourceTag}`) ? [] : ['11']);
       }
       if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);

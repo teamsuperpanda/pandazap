@@ -290,8 +290,8 @@ export class PandaZapSettingTab extends PluginSettingTab {
   }
 
   private fillPickers(): void {
-    if (this.deckDropdown) this.fillPicker('deck', this.deckDropdown);
-    if (this.noteTypeDropdown) this.fillPicker('noteType', this.noteTypeDropdown);
+    if (this.deckDropdown !== null) this.fillPicker('deck', this.deckDropdown);
+    if (this.noteTypeDropdown !== null) this.fillPicker('noteType', this.noteTypeDropdown);
   }
 
   private applyPickerValue(kind: PickerKind, value: string): void {
@@ -318,7 +318,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
 
   private setPickerHint(kind: PickerKind, hint: string | null): void {
     const setting = this.pickerSettings[kind];
-    if (setting) setting.descEl.textContent = hint ?? this.pickerDescription(kind);
+    if (setting !== undefined) setting.descEl.textContent = hint ?? this.pickerDescription(kind);
   }
 
   private setPickerHints(hint: string | null): void {
@@ -337,7 +337,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
    * saving stay available offline.
    */
   private async refreshPickerLists(force: boolean): Promise<void> {
-    if (!this.deckDropdown && !this.noteTypeDropdown) return;
+    if (this.deckDropdown === null && this.noteTypeDropdown === null) return;
     const key = this.currentPickerKey();
     if (!force && this.pickerLists?.key === key) {
       this.fillPickers();

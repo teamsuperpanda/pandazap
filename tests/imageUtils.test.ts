@@ -57,9 +57,10 @@ describe('image source handling', () => {
     path: 'assets/one/image.png',
     stat: { size: 123 },
   } as TFile;
+  const getFirstLinkpathDest = vi.fn(() => localImage);
   const app = {
     metadataCache: {
-      getFirstLinkpathDest: vi.fn(() => localImage),
+      getFirstLinkpathDest,
     },
     vault: {
       readBinary: vi.fn(),
@@ -69,7 +70,7 @@ describe('image source handling', () => {
   it('recognizes HTTP URLs regardless of scheme casing', () => {
     const source = resolveImageSource(app, 'HTTPS://example.com/image.png', 'note.md');
     expect(source).toBe('HTTPS://example.com/image.png');
-    expect(app.metadataCache.getFirstLinkpathDest).not.toHaveBeenCalled();
+    expect(getFirstLinkpathDest).not.toHaveBeenCalled();
   });
 
   it('uses the resolved full source path in the stored filename', () => {

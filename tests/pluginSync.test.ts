@@ -136,10 +136,7 @@ describe('plugin sync cache invalidation', () => {
     const plugin = createPlugin(connector);
 
     await expect(
-      plugin.syncCardsToAnki(
-        false,
-        createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md')
-      )
+      plugin.syncCardsToAnki(false, createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md'))
     ).rejects.toThrow('sync failed');
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
   });
@@ -281,12 +278,12 @@ describe('sync dialog single instance', () => {
 
   it('reuses the open dialog instead of opening a second one', () => {
     const plugin = createPlugin(connectorStub());
-    const running = { open: vi.fn() } as unknown as SyncModal;
-    plugin.showSyncModal(running);
+    const open = vi.fn();
+    plugin.showSyncModal({ open } as unknown as SyncModal);
 
     plugin.openSyncDialog();
 
-    expect(running.open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
     expect(openSyncModal).not.toHaveBeenCalled();
     expect(notices).toContain(
       'A sync dialog is already open. Cancel the running sync or close the dialog.'

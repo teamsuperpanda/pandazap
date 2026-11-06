@@ -34,17 +34,17 @@ describe('CardExtractor (unit tests)', () => {
       const escQ = qTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
       const escA = aTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
       const escI = iTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      
+
       const parts = [`([*_]{0,2})${escQ}\\s*`, `([*_]{0,2})${escA}\\s*`, `([*_]{0,2})${escI}\\s*`];
       const regex = new RegExp(parts.join('|'), 'gi');
-      
-      const text = "Q: Test I: Image A: Ans";
+
+      const text = 'Q: Test I: Image A: Ans';
       const matches = text.match(regex);
       expect(matches).not.toBeNull();
-      expect(matches!.length).toBe(3);
-      expect(matches![0].trim()).toBe('Q:');
-      expect(matches![1].trim()).toBe('I:');
-      expect(matches![2].trim()).toBe('A:');
+      expect(matches.length).toBe(3);
+      expect(matches[0].trim()).toBe('Q:');
+      expect(matches[1].trim()).toBe('I:');
+      expect(matches[2].trim()).toBe('A:');
     });
   });
 });

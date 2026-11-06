@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { requestUrl, notices, confirm, confirmOptions } = vi.hoisted(() => ({
   requestUrl: vi.fn(),
   notices: [] as string[],
-  confirm: vi.fn(),
+  confirm: vi.fn<() => Promise<boolean>>(),
   confirmOptions: [] as Array<{ title: string; message: string; items?: readonly string[] }>,
 }));
 
@@ -39,7 +39,7 @@ import { DEFAULT_SETTINGS, type PandaZapSettings } from '../src/sync/types';
 import { installFakeAnki, type FakeAnkiState } from './fakeAnki';
 
 function createConnector(): AnkiConnector {
-  return new AnkiConnector({ ...DEFAULT_SETTINGS } as PandaZapSettings, {} as never);
+  return new AnkiConnector({ ...DEFAULT_SETTINGS }, {} as never);
 }
 
 function createPlugin(connector: AnkiConnector): PandaZapPlugin {
@@ -279,9 +279,9 @@ describe('orphaned media cleanup', () => {
     const cleanup = plugin.cleanUpOrphanedMedia();
     await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
 
-    const modal = { open: vi.fn() } as unknown as SyncModal;
-    plugin.showSyncModal(modal);
-    expect(modal.open).not.toHaveBeenCalled();
+    const open = vi.fn();
+    plugin.showSyncModal({ open } as unknown as SyncModal);
+    expect(open).not.toHaveBeenCalled();
     expect(notices).toContain('Wait for the media cleanup to finish');
 
     release(false);

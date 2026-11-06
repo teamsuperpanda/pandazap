@@ -42,6 +42,14 @@ function ok(result: unknown) {
   return { status: 200, json: { result, error: null } };
 }
 
+/** Reads a request parameter as AnkiConnect would: a string, never an object. */
+function stringParam(params: Record<string, unknown> | undefined, key: string): string {
+  const value = params?.[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return '';
+}
+
 /** Every field value of a note, for Anki's quoted full-text search. */
 function noteText(note: FakeNote): string {
   const fields = note.fields ?? {
@@ -97,7 +105,7 @@ export function installFakeAnki(
       case 'modelNames':
         return ok(state.models);
       case 'findNotes': {
-        const query = String(request.params?.query ?? '');
+        const query = stringParam(request.params, 'query');
         if (state.failFindNotes?.(query)) throw new Error('findNotes failed');
         // Tag, deck and quoted text filters are honoured, so an over-broad
         // legacy query fails the tests instead of passing unnoticed.
@@ -110,7 +118,8 @@ export function installFakeAnki(
         const deckMatch = query.match(/deck:"([^"]*)"/);
         const deck = deckMatch?.[1];
         const textQuery = deckMatch ? query.replace(deckMatch[0], '') : query;
-        const quoted = (textQuery.match(/"[^"]*"/g) ?? []).map((token) => token.slice(1, -1));
+        const matches: string[] = textQuery.match(/"[^"]*"/g) ?? [];
+        const quoted = matches.map((token) => token.slice(1, -1));
         return ok(
           state.notes
             .filter((note) => tags.every((tag) => note.tags.includes(tag)))
@@ -141,25 +150,27 @@ export function installFakeAnki(
         return ok(state.cards.filter((card) => ids.includes(card.cardId)));
       }
       case 'updateNoteTags': {
-        const note = state.notes.find((entry) => entry.noteId === String(request.params?.note));
+        const note = state.notes.find(
+          (entry) => entry.noteId === stringParam(request.params, 'note')
+        );
         if (note) note.tags = [...((request.params?.tags as string[]) ?? [])];
         return ok(null);
       }
       case 'changeDeck': {
         const ids = ((request.params?.cards as unknown[]) ?? []).map(Number);
-        const deck = String(request.params?.deck ?? '');
+        const deck = stringParam(request.params, 'deck');
         for (const card of state.cards) if (ids.includes(card.cardId)) card.deckName = deck;
         return ok(null);
       }
       case 'getMediaFilesNames': {
-        const pattern = String(request.params?.pattern ?? '')
+        const pattern = stringParam(request.params, 'pattern')
           .replace(/[.+^${}()|[\]\\]/g, '\\$&')
           .replace(/\*/g, '.*');
         const matcher = new RegExp(`^${pattern}$`);
         return ok(state.media.filter((name) => matcher.test(name)));
       }
       case 'deleteMediaFile': {
-        const filename = String(request.params?.filename ?? '');
+        const filename = stringParam(request.params, 'filename');
         state.media = state.media.filter((name) => name !== filename);
         return ok(null);
       }
