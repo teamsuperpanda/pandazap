@@ -24,6 +24,16 @@ import {
   RETRY_BACKOFF_BASE_MS,
 } from '../constants';
 import { buildAnkiConnectUrl } from '../settings';
+import {
+  parseCardsInfo,
+  parseMediaName,
+  parseNoteId,
+  parseNoteIds,
+  parseNotesInfo,
+  parseNullResult,
+  parseStringArray,
+  parseVersion,
+} from './ankiResponses';
 import { extractDeckOverride, extractQACardsFromText } from './extractionUtils';
 import { stableHash } from './hashUtils';
 import { withTimeout } from './requestTimeout';
@@ -71,8 +81,7 @@ export class AnkiConnector {
 
   async testConnection(): Promise<AnkiConnectionState> {
     try {
-      const version = await this.ankiConnectRequest('version');
-      if (typeof version !== 'number') return { status: 'protocol-error' };
+      const version = parseVersion(await this.ankiConnectRequest('version'));
       if (version < ANKI_CONNECT_VERSION) return { status: 'version-too-old', version };
       return { status: 'ok', version };
     } catch (e: unknown) {
@@ -100,9 +109,7 @@ export class AnkiConnector {
   }
 
   private async listNames(action: 'deckNames' | 'modelNames', label: string): Promise<string[]> {
-    const names = await this.ankiConnectRequest(action);
-    if (!isStringArray(names)) throw new Error(`Anki returned invalid ${label} names`);
-    return names;
+    return parseStringArray(await this.ankiConnectRequest(action), `${label} names`);
   }
 
   async analyzeSyncOperation(
@@ -190,19 +197,15 @@ export class AnkiConnector {
     if (notePath) {
       const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
-      const findNotes = async (query: string): Promise<string[]> => {
-        const existingNoteIds = (await this.ankiConnectRequest('findNotes', {
-          query,
-        })) as Array<string | number>;
-        if (!Array.isArray(existingNoteIds)) throw new Error('Anki returned invalid note IDs');
-        return existingNoteIds.map(String);
+      const findNotes = async (query: string): Promise<number[]> => {
+        return parseNoteIds(await this.ankiConnectRequest('findNotes', { query }));
       };
 
       const sourceTags =
         cards.length === 0
           ? [this.getSourceTag(notePath)]
           : this.getEligibleSourceTags(notePath, deckName, noteContent);
-      const noteIds = new Set<string>();
+      const noteIds = new Set<number>();
       for (const sourceTag of sourceTags) {
         // An emptied note may have lost its `Deck::` line or had the default deck
         // changed, so a deck filter would hide the notes it still owns. Its exact
@@ -216,10 +219,9 @@ export class AnkiConnector {
       }
 
       if (noteIds.size > 0) {
-        const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-          notes: [...noteIds],
-        })) as AnkiNoteInfo[];
-        if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+        const notesInfo = parseNotesInfo(
+          await this.ankiConnectRequest('notesInfo', { notes: [...noteIds] })
+        );
 
         for (const ni of notesInfo) {
           try {
@@ -228,11 +230,10 @@ export class AnkiConnector {
             const back = ni.fields?.Back?.value?.trim() ?? '';
             if (front && !extractedQuestions.has(normalizeField(front))) {
               const delCard = { question: front, answer: back };
-              const noteId = ankiNoteId(ni);
               analysis.cardsToDelete.push({
                 card: delCard,
                 deckName,
-                existingCardId: noteId,
+                existingCardId: ni.noteId,
                 externallyEdited: this.isExternallyEdited(ni, front, back),
               });
             }
@@ -261,7 +262,7 @@ export class AnkiConnector {
     notePath?: string,
     noteContent?: string,
     deleteConfirmed: boolean = false,
-    confirmedDeletionIds?: readonly string[],
+    confirmedDeletionIds?: readonly number[],
     skipConnectionTest: boolean = false,
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
@@ -284,9 +285,12 @@ export class AnkiConnector {
 
     if (this.settings.useNoteBased && notePath && cards.length > 0 && !isCancelled()) {
       try {
-        await this.ankiConnectRequest('createDeck', {
-          deck: deckName,
-        });
+        parseNullResult(
+          await this.ankiConnectRequest('createDeck', {
+            deck: deckName,
+          }),
+          'deck creation result'
+        );
       } catch (e: unknown) {
         console.warn('PandaZap: deck creation error', e);
       }
@@ -336,22 +340,25 @@ export class AnkiConnector {
           results.push({ card, status: 'conflict', deckName, reason: 'changed in Anki' });
         } else {
           try {
-            await this.ankiConnectRequest('addNote', {
-              note: {
-                deckName: deckName,
-                modelName: this.settings.noteType,
-                fields: {
-                  Front: card.question,
-                  Back: finalBack,
+            parseNoteId(
+              await this.ankiConnectRequest('addNote', {
+                note: {
+                  deckName: deckName,
+                  modelName: this.settings.noteType,
+                  fields: {
+                    Front: card.question,
+                    Back: finalBack,
+                  },
+                  tags: [
+                    'panda-zap',
+                    'obsidian',
+                    ...(notePath ? [this.getSourceTag(notePath)] : []),
+                    this.syncTagFor(card.question, finalBack),
+                  ],
                 },
-                tags: [
-                  'panda-zap',
-                  'obsidian',
-                  ...(notePath ? [this.getSourceTag(notePath)] : []),
-                  this.syncTagFor(card.question, finalBack),
-                ],
-              },
-            });
+              }),
+              'note ID from addNote'
+            );
             results.push({ card, status: 'added', deckName });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message.toLowerCase() : '';
@@ -378,14 +385,17 @@ export class AnkiConnector {
     if (deleteConfirmed && notePath && !isCancelled()) {
       try {
         const toDelete = confirmedDeletionIds
-          ? [...new Set(confirmedDeletionIds.filter(Boolean))]
+          ? [...new Set(confirmedDeletionIds)]
           : (
               await this.analyzeSyncOperation(cards, notePath, noteContent, skipConnectionTest)
             ).cardsToDelete
               .map((d) => d.existingCardId)
-              .filter((id): id is string => Boolean(id));
+              .filter((id): id is number => id !== undefined);
         if (toDelete.length > 0) {
-          await this.ankiConnectRequest('deleteNotes', { notes: toDelete });
+          parseNullResult(
+            await this.ankiConnectRequest('deleteNotes', { notes: toDelete }),
+            'delete result'
+          );
           result.deletion = { deletedCount: toDelete.length, failed: false };
         }
       } catch (err: unknown) {
@@ -433,15 +443,18 @@ export class AnkiConnector {
         }
       }
 
-      await this.ankiConnectRequest('updateNoteFields', {
-        note: {
-          id: noteId,
-          fields: {
-            Front: card.question,
-            Back: targetBack,
+      parseNullResult(
+        await this.ankiConnectRequest('updateNoteFields', {
+          note: {
+            id: noteId,
+            fields: {
+              Front: card.question,
+              Back: targetBack,
+            },
           },
-        },
-      });
+        }),
+        'note update result'
+      );
       await this.ensureNoteTags(
         noteId,
         cached,
@@ -509,7 +522,7 @@ export class AnkiConnector {
    * tag. The old fingerprint is replaced, never accumulated.
    */
   private async ensureNoteTags(
-    noteId: string,
+    noteId: number,
     cached: NoteCacheEntry,
     notePath: string | undefined,
     syncTag: string
@@ -522,10 +535,13 @@ export class AnkiConnector {
       return;
     }
 
-    await this.ankiConnectRequest('updateNoteTags', {
-      note: Number(noteId),
-      tags,
-    });
+    parseNullResult(
+      await this.ankiConnectRequest('updateNoteTags', {
+        note: noteId,
+        tags,
+      }),
+      'tag update result'
+    );
     cached.raw.tags = tags;
   }
 
@@ -571,10 +587,7 @@ export class AnkiConnector {
     const allIds = [...new Set([...ownedIds, ...legacyIds])];
     if (allIds.length === 0) return { migrated: 0, unresolvedLegacy: false };
 
-    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-      notes: allIds,
-    })) as AnkiNoteInfo[];
-    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+    const notesInfo = parseNotesInfo(await this.ankiConnectRequest('notesInfo', { notes: allIds }));
 
     const defaultDeckMode = !this.settings.useNoteBased && !this.getDeckOverride(toContent);
     const migrationOptions = {
@@ -587,7 +600,7 @@ export class AnkiConnector {
 
     // Trusted hashed notes are migrated before the legacy attempt, so a legacy
     // problem never leaves the note's current cards behind.
-    const ownedNotes = notesInfo.filter((note) => ownedIds.has(ankiNoteId(note)));
+    const ownedNotes = notesInfo.filter((note) => ownedIds.has(note.noteId));
     let migrated = await this.applySourceTagMigration(ownedNotes, migrationOptions);
 
     const legacyCandidates = this.legacyOwnershipCandidates(
@@ -607,14 +620,14 @@ export class AnkiConnector {
     const ambiguous = [...frontMatches.values()].some((count) => count > 1);
     const undecidable = legacyCandidates.some(
       (note) =>
-        !ownedIds.has(ankiNoteId(note)) &&
+        !ownedIds.has(note.noteId) &&
         !questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
     );
     if (ambiguous || undecidable) return { migrated, unresolvedLegacy: true };
 
     const legacyTargets = legacyCandidates.filter(
       (note) =>
-        !ownedIds.has(ankiNoteId(note)) &&
+        !ownedIds.has(note.noteId) &&
         questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
     );
     migrated += await this.applySourceTagMigration(legacyTargets, migrationOptions);
@@ -627,13 +640,13 @@ export class AnkiConnector {
    */
   private legacyOwnershipCandidates(
     notes: readonly AnkiNoteInfo[],
-    legacyIds: readonly string[],
+    legacyIds: readonly number[],
     hashedOldTag: string,
     legacyOldTag: string
   ): AnkiNoteInfo[] {
     const ids = new Set(legacyIds);
     return notes.filter((note) => {
-      if (!ids.has(ankiNoteId(note)) || !note.tags?.includes(legacyOldTag)) return false;
+      if (!ids.has(note.noteId) || !note.tags?.includes(legacyOldTag)) return false;
       // A note with a source tag of its own belongs to a different note, even
       // when it also carries this legacy tag.
       return !note.tags?.some(
@@ -666,11 +679,9 @@ export class AnkiConnector {
     );
   }
 
-  /** Note IDs matching one AnkiConnect query, as strings. */
-  private async findPluginNotes(query: string): Promise<string[]> {
-    const found = (await this.ankiConnectRequest('findNotes', { query })) as Array<string | number>;
-    if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
-    return found.map(String);
+  /** Note IDs matching one AnkiConnect query. */
+  private async findPluginNotes(query: string): Promise<number[]> {
+    return parseNoteIds(await this.ankiConnectRequest('findNotes', { query }));
   }
 
   /** Retags the given notes and moves the cards still in the old deck. */
@@ -688,7 +699,7 @@ export class AnkiConnector {
     const cardsByNote = await this.fetchCardsByNote(notes);
 
     for (const note of notes) {
-      const noteId = ankiNoteId(note);
+      const noteId = note.noteId;
       if (!noteId) continue;
 
       // The deck moves first. If the tag update then fails, the note still
@@ -701,19 +712,25 @@ export class AnkiConnector {
           .filter((card) => card.deckName === options.oldDeck)
           .map((card) => card.cardId);
         if (cardsToMove.length > 0) {
-          await this.ankiConnectRequest('changeDeck', {
-            cards: cardsToMove,
-            deck: options.newDeck,
-          });
+          parseNullResult(
+            await this.ankiConnectRequest('changeDeck', {
+              cards: cardsToMove,
+              deck: options.newDeck,
+            }),
+            'deck change result'
+          );
         }
       }
 
       const tags = (note.tags ?? []).filter((tag) => !options.removeTags.includes(tag));
       if (!tags.includes(options.toTag)) tags.push(options.toTag);
-      await this.ankiConnectRequest('updateNoteTags', {
-        note: Number(noteId),
-        tags,
-      });
+      parseNullResult(
+        await this.ankiConnectRequest('updateNoteTags', {
+          note: noteId,
+          tags,
+        }),
+        'tag update result'
+      );
     }
 
     // Tags and decks changed under the cached notes.
@@ -724,27 +741,25 @@ export class AnkiConnector {
   /** Card details per note, so a source tag migration can move decks. */
   private async fetchCardsByNote(
     notes: readonly AnkiNoteInfo[]
-  ): Promise<Map<string, AnkiCardInfo[]>> {
-    const byNote = new Map<string, AnkiCardInfo[]>();
+  ): Promise<Map<number, AnkiCardInfo[]>> {
+    const byNote = new Map<number, AnkiCardInfo[]>();
     const cardIds = new Set<number>();
     for (const note of notes) {
-      const noteId = ankiNoteId(note);
+      const noteId = note.noteId;
       if (!noteId) continue;
       byNote.set(noteId, []);
       for (const cardId of note.cards ?? []) {
-        if (typeof cardId === 'number') cardIds.add(cardId);
+        cardIds.add(cardId);
       }
     }
     if (cardIds.size === 0) return byNote;
 
-    const cardsInfo = (await this.ankiConnectRequest('cardsInfo', {
-      cards: [...cardIds],
-    })) as AnkiCardInfo[];
-    if (!Array.isArray(cardsInfo)) throw new Error('Anki returned invalid card information');
+    const cardsInfo = parseCardsInfo(
+      await this.ankiConnectRequest('cardsInfo', { cards: [...cardIds] })
+    );
     for (const card of cardsInfo) {
-      // cardsInfo reports the owning note as a number, so compare as strings.
-      if (typeof card?.note !== 'number') continue;
-      const entries = byNote.get(String(card.note));
+      if (card.note === undefined) continue;
+      const entries = byNote.get(card.note);
       if (entries) entries.push(card);
     }
     return byNote;
@@ -768,28 +783,25 @@ export class AnkiConnector {
 
   /** Every media file the plugin has uploaded to Anki. */
   async getPluginMediaFiles(): Promise<string[]> {
-    const names = (await this.ankiConnectRequest('getMediaFilesNames', {
-      pattern: `${MEDIA_FILENAME_PREFIX}*`,
-    })) as string[];
-    if (!Array.isArray(names) || names.some((name) => typeof name !== 'string')) {
-      throw new Error('Anki returned invalid media file names');
-    }
-    return names;
+    return parseStringArray(
+      await this.ankiConnectRequest('getMediaFilesNames', {
+        pattern: `${MEDIA_FILENAME_PREFIX}*`,
+      }),
+      'media file names'
+    );
   }
 
   /** Media filenames referenced by any field of any plugin-tagged note. */
   async getReferencedMediaFiles(): Promise<Set<string>> {
-    const noteIds = (await this.ankiConnectRequest('findNotes', {
-      query: `tag:${PLUGIN_TAG}`,
-    })) as string[];
-    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
+    const noteIds = parseNoteIds(
+      await this.ankiConnectRequest('findNotes', { query: `tag:${PLUGIN_TAG}` })
+    );
     const referenced = new Set<string>();
     if (noteIds.length === 0) return referenced;
 
-    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-      notes: noteIds,
-    })) as AnkiNoteInfo[];
-    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+    const notesInfo = parseNotesInfo(
+      await this.ankiConnectRequest('notesInfo', { notes: noteIds })
+    );
     for (const note of notesInfo) {
       for (const field of Object.values(note.fields ?? {})) {
         if (!field || typeof field.value !== 'string') continue;
@@ -809,10 +821,11 @@ export class AnkiConnector {
   async filterUnreferencedMedia(filenames: readonly string[]): Promise<string[]> {
     const unreferenced: string[] = [];
     for (const filename of filenames) {
-      const found = (await this.ankiConnectRequest('findNotes', {
-        query: `"${filename.replace(/"/g, '')}"`,
-      })) as Array<string | number>;
-      if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
+      const found = parseNoteIds(
+        await this.ankiConnectRequest('findNotes', {
+          query: `"${filename.replace(/"/g, '')}"`,
+        })
+      );
       if (found.length === 0) unreferenced.push(filename);
     }
     return unreferenced;
@@ -822,7 +835,10 @@ export class AnkiConnector {
   async removeMediaFiles(filenames: readonly string[]): Promise<number> {
     let deleted = 0;
     for (const filename of filenames) {
-      await this.ankiConnectRequest('deleteMediaFile', { filename });
+      parseNullResult(
+        await this.ankiConnectRequest('deleteMediaFile', { filename }),
+        'media deletion result'
+      );
       deleted += 1;
     }
     return deleted;
@@ -843,10 +859,12 @@ export class AnkiConnector {
 
     const safeFilename = getStoredMediaFilenameForSource(source, notePath);
 
-    const result = (await this.ankiConnectRequest('storeMediaFile', {
-      filename: safeFilename,
-      data: base64,
-    })) as string;
+    const result = parseMediaName(
+      await this.ankiConnectRequest('storeMediaFile', {
+        filename: safeFilename,
+        data: base64,
+      })
+    );
     return result;
   }
 
@@ -854,28 +872,23 @@ export class AnkiConnector {
     if (this.noteCache && this.noteCache.deckName === deckName) return;
     const noteCache = { deckName, byFront: new Map<string, NoteCacheEntry[]>() };
     const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
-    const foundIds = (await this.ankiConnectRequest('findNotes', { query })) as Array<
-      string | number
-    >;
-    if (!Array.isArray(foundIds)) throw new Error('Anki returned invalid note IDs');
-    const noteIds = foundIds.map(String);
+    const noteIds = parseNoteIds(await this.ankiConnectRequest('findNotes', { query }));
 
     if (noteIds.length === 0) {
       this.noteCache = noteCache;
       return;
     }
 
-    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-      notes: noteIds,
-    })) as AnkiNoteInfo[];
-    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+    const notesInfo = parseNotesInfo(
+      await this.ankiConnectRequest('notesInfo', { notes: noteIds })
+    );
 
     for (const ni of notesInfo) {
       try {
         const frontValue = ni.fields?.Front?.value ?? '';
         const front = frontValue.trim();
         const key = normalizeField(front);
-        const id = ankiNoteId(ni);
+        const id = ni.noteId;
         if (!id) continue;
         const entry: NoteCacheEntry = { noteId: id, fields: ni.fields, raw: ni };
         const existing = noteCache.byFront.get(key);
@@ -1030,11 +1043,6 @@ export class AnkiConnector {
   }
 }
 
-/** Anki Connect uses numeric note IDs in responses; compare them as strings. */
-function ankiNoteId(note: AnkiNoteInfo): string {
-  return String(note.noteId ?? note.noteIds?.[0] ?? note.id ?? '');
-}
-
 function isNetworkError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -1046,10 +1054,6 @@ function isNetworkError(error: unknown): boolean {
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.name === 'TimeoutError';
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 function normalizeField(s: string): string {

@@ -361,7 +361,7 @@ export default class PandaZapPlugin extends Plugin {
         return;
       }
 
-      let confirmedDeletionIdsByNote: ReadonlyMap<string, readonly string[]> | undefined;
+      let confirmedDeletionIdsByNote: ReadonlyMap<string, readonly number[]> | undefined;
       if (analysis.cardsToDelete.length > 0) {
         const confirmed = await this.confirmDirectDeletions(analysis, bContext.notePaths);
         if (!confirmed) {
@@ -410,10 +410,10 @@ export default class PandaZapPlugin extends Plugin {
   private async confirmDirectDeletions(
     analysis: SyncAnalysis,
     notePaths: readonly string[]
-  ): Promise<ReadonlyMap<string, readonly string[]> | null> {
-    const byNote = new Map<string, string[]>();
+  ): Promise<ReadonlyMap<string, readonly number[]> | null> {
+    const byNote = new Map<string, number[]>();
     for (const card of analysis.cardsToDelete) {
-      if (!card.existingCardId) continue;
+      if (card.existingCardId === undefined) continue;
       const notePath = card.notePath ?? notePaths[0];
       if (!notePath) continue;
       const ids = byNote.get(notePath) ?? [];
@@ -1000,7 +1000,7 @@ export default class PandaZapPlugin extends Plugin {
   async syncBatchCards(
     bContext: BatchSyncContext,
     deleteConfirmed: boolean = false,
-    confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>,
+    confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly number[]>,
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     await this.ensureTagMigrationsApplied(bContext.notePaths);
@@ -1089,7 +1089,7 @@ export default class PandaZapPlugin extends Plugin {
   async syncCardsToAnki(
     deleteConfirmed: boolean = false,
     context?: SyncContext,
-    confirmedDeletionIds?: readonly string[],
+    confirmedDeletionIds?: readonly number[],
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     const syncContext = context ?? this.captureSyncContext();

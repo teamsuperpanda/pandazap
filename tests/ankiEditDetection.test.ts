@@ -114,7 +114,7 @@ describe('Anki edit detection', () => {
     const anki = installFakeAnki(requestUrl, {
       notes: [
         {
-          noteId: '1',
+          noteId: 1,
           front: 'Q',
           back: 'A',
           tags: ['panda-zap', legacyTag],

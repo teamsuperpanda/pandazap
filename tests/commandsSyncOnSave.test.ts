@@ -371,7 +371,7 @@ describe('sync current note command', () => {
           {
             card: { question: 'Old', answer: '' },
             deckName: 'note',
-            existingCardId: '1',
+            existingCardId: 1,
           },
         ],
         cardsInConflict: [],
@@ -391,7 +391,7 @@ describe('sync current note command', () => {
       'note.md',
       'Q: Q\nA: A',
       true,
-      ['1'],
+      [1],
       true,
       expect.objectContaining({ abort: expectedAbort })
     );
@@ -439,7 +439,7 @@ describe('sync current note command', () => {
           {
             card: { question: 'Old', answer: '' },
             deckName: 'note',
-            existingCardId: '1',
+            existingCardId: 1,
             externallyEdited: true,
           },
         ],
@@ -548,7 +548,7 @@ describe('file menu sync entry', () => {
           {
             card: { question: 'Old', answer: '' },
             deckName: 'x',
-            existingCardId: notePath === 'one.md' ? '11' : '22',
+            existingCardId: notePath === 'one.md' ? 11 : 22,
           },
         ],
         cardsInConflict: [],
@@ -568,9 +568,9 @@ describe('file menu sync entry', () => {
     expect(confirmOptions[0].message).toContain('2 cards from 2 notes');
     expect(confirmOptions[0].items).toEqual(['one (1)', 'two (1)']);
     expect(connector.syncCards.mock.calls[0][3]).toBe(true);
-    expect(connector.syncCards.mock.calls[0][4]).toEqual(['11']);
+    expect(connector.syncCards.mock.calls[0][4]).toEqual([11]);
     expect(connector.syncCards.mock.calls[1][3]).toBe(true);
-    expect(connector.syncCards.mock.calls[1][4]).toEqual(['22']);
+    expect(connector.syncCards.mock.calls[1][4]).toEqual([22]);
   });
 
   it('does not add an entry for a non-Markdown file', async () => {
@@ -644,7 +644,7 @@ describe('sync on save', () => {
     const anki: FakeAnkiState = installFakeAnki(requestUrl, {
       notes: [
         {
-          noteId: '1',
+          noteId: 1,
           front: 'Q1',
           back: 'A1',
           tags: ['panda-zap', sourceTag],
@@ -652,7 +652,7 @@ describe('sync on save', () => {
         },
         {
           // A stale card a confirmed sync would be allowed to remove.
-          noteId: '2',
+          noteId: 2,
           front: 'Stale',
           back: 'Old answer',
           tags: ['panda-zap', sourceTag],
@@ -691,7 +691,7 @@ describe('sync on save', () => {
     const anki = installFakeAnki(requestUrl, {
       notes: [
         {
-          noteId: '1',
+          noteId: 1,
           front: 'Q1',
           back: 'Edited in Anki',
           tags: ['panda-zap', sourceTag, syncTagFor(connector, 'Q1', 'A1')],
@@ -916,7 +916,7 @@ describe('sync on save', () => {
     installFakeAnki(requestUrl, {
       notes: [
         {
-          noteId: '1',
+          noteId: 1,
           front: 'Q',
           back: 'A',
           tags: ['panda-zap', legacyTag],
