@@ -200,7 +200,7 @@ async function createHarness(notes: Record<string, string> = {}): Promise<Harnes
     plugin,
     file,
     setActiveView: (view) => {
-      activeView = (view ?? null) as object | null;
+      activeView = view ?? null;
     },
     vaultHandlers,
     workspaceHandlers,

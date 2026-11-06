@@ -5,6 +5,7 @@ import { ConfirmModal } from './dialogs/ConfirmModal';
 import { AnkiConnector } from './sync/AnkiConnector';
 import { CardExtractor } from './sync/CardExtractor';
 import {
+  DEFAULT_SETTINGS,
   PandaZapSettings,
   SyncAnalysis,
   SyncContext,
@@ -30,9 +31,9 @@ import {
 import { markerLabels, normalizeSettings } from './settings';
 
 export default class PandaZapPlugin extends Plugin {
-  settings: PandaZapSettings;
-  private ankiConnector: AnkiConnector;
-  private cardExtractor: CardExtractor;
+  settings: PandaZapSettings = { ...DEFAULT_SETTINGS, pendingTagMigrations: [] };
+  private ankiConnector: AnkiConnector = new AnkiConnector(this.settings, this.app);
+  private cardExtractor: CardExtractor = new CardExtractor();
   private settingsSaveQueue: Promise<void> = Promise.resolve();
   private tagMigrationQueue: Promise<void> = Promise.resolve();
   private mediaCleanupActive = false;
@@ -58,8 +59,7 @@ export default class PandaZapPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.ankiConnector = new AnkiConnector(this.settings, this.app);
-    this.cardExtractor = new CardExtractor();
+    this.ankiConnector.updateSettings(this.settings);
 
     this.addRibbonIcon('zap', 'Sync notes to Anki', () => {
       void this.openSyncDialog();
