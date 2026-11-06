@@ -4,12 +4,14 @@ const { requestUrl } = vi.hoisted(() => ({ requestUrl: vi.fn() }));
 vi.mock('obsidian', () => ({ requestUrl }));
 
 import {
+  downloadImageToBase64,
   sanitizeMediaFilename,
   getImageFilename,
   getStoredMediaFilename,
   readImageFileToBase64,
   resolveImageSource,
 } from '../src/sync/imageUtils';
+import { REQUEST_TIMEOUT_MS } from '../src/constants';
 import type { App, TFile } from 'obsidian';
 
 describe('sanitizeMediaFilename', () => {
@@ -110,5 +112,44 @@ describe('getImageFilename', () => {
 
   it('returns image.png fallback for empty path', () => {
     expect(getImageFilename('')).toBe('image.png');
+  });
+});
+
+describe('downloadImageToBase64', () => {
+  it('rejects a download that never settles once the timeout elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockReset();
+      requestUrl.mockImplementation(() => new Promise<never>(() => {}));
+      const request = downloadImageToBase64('https://example.com/image.png');
+      const rejection = expect(request).rejects.toThrow(
+        /Image download from https:\/\/example.com\/image.png timed out after 5000 ms.*network connection/
+      );
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await rejection;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the download timeout timer after a successful response', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockReset();
+      requestUrl.mockResolvedValue({
+        status: 200,
+        headers: {},
+        arrayBuffer: new TextEncoder().encode('image').buffer,
+      });
+
+      const result = await downloadImageToBase64('https://example.com/image.png');
+
+      expect(result).toBe(btoa('image'));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,5 +1,7 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { stableHash } from './hashUtils';
+import { REQUEST_TIMEOUT_MS } from '../constants';
+import { withTimeout } from './requestTimeout';
 
 /**
  * Dual FNV-like hash producing a 14-character base-36 string.
@@ -127,7 +129,10 @@ export async function downloadImageToBase64(url: string): Promise<string> {
   }
 
   try {
-    const response = await requestUrl({ url, method: 'GET', throw: false });
+    const response = await withTimeout(
+      requestUrl({ url, method: 'GET', throw: false }),
+      `Image download from ${url} timed out after ${REQUEST_TIMEOUT_MS} ms. Check the image URL and your network connection.`
+    );
 
     if (response.status >= 400) {
       throw new Error(`Download failed with status ${response.status}`);
