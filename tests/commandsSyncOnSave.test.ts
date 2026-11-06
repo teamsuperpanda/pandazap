@@ -15,6 +15,7 @@ const {
   statusItem,
   confirmResult,
   confirmOptions,
+  confirmGate,
 } = vi.hoisted(() => {
   const statusBarState = {
     text: '',
@@ -42,6 +43,8 @@ const {
     statusItem,
     confirmResult: { value: true },
     confirmOptions: [] as Array<{ title: string; message: string; items?: readonly string[] }>,
+    /** Holds the deletion confirmation open while a test interleaves other work. */
+    confirmGate: { promise: null as Promise<void> | null },
   };
 });
 
@@ -98,6 +101,7 @@ vi.mock('../src/dialogs/ConfirmModal', () => ({
       confirmOptions.push(options);
     }
     async confirm(): Promise<boolean> {
+      if (confirmGate.promise) await confirmGate.promise;
       return confirmResult.value;
     }
   },
@@ -216,6 +220,7 @@ function stubConnector(overrides: Record<string, unknown> = {}) {
     invalidateCache: vi.fn(),
     testConnection: vi.fn().mockResolvedValue({ status: 'ok', version: 6 }),
     hasNotesForSourceTag: vi.fn().mockResolvedValue(false),
+    migrateSourceTag: vi.fn().mockResolvedValue({ migrated: 0, unresolvedLegacy: false }),
     analyzeSyncOperation: vi.fn().mockResolvedValue({
       cardsToAdd: [],
       cardsToUpdate: [],
@@ -288,6 +293,7 @@ beforeEach(() => {
   statusBarState.created = 0;
   confirmOptions.length = 0;
   confirmResult.value = true;
+  confirmGate.promise = null;
   (globalThis as unknown as { activeDocument: unknown }).activeDocument = {
     querySelectorAll: () => [],
   };
@@ -395,6 +401,42 @@ describe('sync current note command', () => {
       [1],
       true,
       expect.objectContaining({ abort: expectedAbort })
+    );
+  });
+
+  it('does not sync when a dialog opens while the deletion confirmation is pending', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [
+          {
+            card: { question: 'Old', answer: '' },
+            deckName: 'note',
+            existingCardId: 1,
+          },
+        ],
+        cardsInConflict: [],
+        totalCards: 1,
+      }),
+    });
+    useConnector(harness.plugin, connector);
+    harness.setActiveView(markdownView('note.md', 'Q: Q\nA: A'));
+    let release!: () => void;
+    confirmGate.promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const run = harness.plugin.syncCurrentNote();
+    await vi.waitFor(() => expect(confirmOptions).toHaveLength(1));
+    harness.plugin.showSyncModal({ open: vi.fn() } as never);
+    release();
+    await run;
+
+    expect(connector.syncCards).not.toHaveBeenCalled();
+    expect(notices).toContain(
+      'A sync dialog is already open. Cancel the running sync or close the dialog.'
     );
   });
 
@@ -539,6 +581,35 @@ describe('file menu sync entry', () => {
     expect(openSyncModal).not.toHaveBeenCalled();
   });
 
+  it('stops a direct batch when one of its notes is deleted mid-run', async () => {
+    const harness = await createHarness({ 'one.md': 'Q: Q\nA: A', 'two.md': 'Q: Q2\nA: A2' });
+    let runs = 0;
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [],
+        cardsInConflict: [],
+        totalCards: 1,
+      }),
+      syncCards: vi.fn(async () => {
+        runs += 1;
+        if (runs === 1) harness.vaultHandlers.get('delete')?.(harness.file('two.md'));
+        return { cards: [] };
+      }),
+    });
+    useConnector(harness.plugin, connector);
+    harness.selectFiles(harness.file('one.md'), harness.file('two.md'));
+    const { entries, menu } = createMenu();
+
+    harness.workspaceHandlers.get('file-menu')?.(menu, harness.file('one.md'));
+    entries[0].onClick?.();
+
+    await vi.waitFor(() => expect(notices).toContain('Sync cancelled'));
+    expect(connector.syncCards).toHaveBeenCalledTimes(1);
+    expect(connector.syncCards.mock.calls[0][1]).toBe('one.md');
+  });
+
   it('confirms aggregated deletions once before a multi-note sync', async () => {
     const harness = await createHarness({ 'one.md': 'Q: Q\nA: A', 'two.md': 'Q: Q2\nA: A2' });
     const connector = stubConnector({
@@ -634,6 +705,64 @@ describe('sync on save', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(connector.hasNotesForSourceTag).toHaveBeenCalledTimes(1);
     expect(connector.syncCards).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs once more after a save that lands during an in-flight silent sync', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const firstRun = deferred<{ cards: [] }>();
+    const connector = stubConnector({
+      hasNotesForSourceTag: vi.fn().mockResolvedValue(true),
+      syncCards: vi.fn().mockReturnValueOnce(firstRun.promise).mockResolvedValue({ cards: [] }),
+    });
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    vi.useFakeTimers();
+    const modify = harness.vaultHandlers.get('modify');
+
+    modify?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connector.syncCards).toHaveBeenCalledTimes(1);
+
+    // The second save arrives while the first run is still waiting on Anki.
+    modify?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connector.syncCards).toHaveBeenCalledTimes(1);
+
+    firstRun.resolve({ cards: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+
+    expect(connector.syncCards).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips a silent sync while the note still has a queued rename migration', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const connector = stubConnector({
+        hasNotesForSourceTag: vi.fn().mockResolvedValue(true),
+        migrateSourceTag: vi.fn().mockRejectedValue(new Error('Anki unreachable')),
+      });
+      useConnector(harness.plugin, connector);
+      useSettings(harness.plugin, {
+        syncOnSave: true,
+        pendingTagMigrations: [{ fromPath: 'old.md', toPath: 'note.md' }],
+      });
+      vi.useFakeTimers();
+
+      harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+      await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(connector.migrateSourceTag).toHaveBeenCalledWith('old.md', 'note.md', 'Q: Q\nA: A');
+      expect(connector.hasNotesForSourceTag).not.toHaveBeenCalled();
+      expect(connector.syncCards).not.toHaveBeenCalled();
+      expect(notices).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('never deletes Anki notes in silent mode', async () => {

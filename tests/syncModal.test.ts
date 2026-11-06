@@ -28,6 +28,7 @@ import { Modal } from 'obsidian';
 import { SyncModal } from '../src/dialogs/SyncModal';
 import { PreviewModal } from '../src/dialogs/PreviewModal';
 import { ConfirmDeleteModal, describeDeleteConfirmation } from '../src/dialogs/ConfirmDeleteModal';
+import { SyncModalController } from '../src/dialogs/SyncModalController';
 import {
   DEFAULT_SETTINGS,
   createBatchSyncContext,
@@ -281,6 +282,38 @@ describe('SyncModal view', () => {
     expect(header.getAttr('aria-expanded')).toBe('true');
     expect(skippedList.classList.contains('hidden')).toBe(false);
     expect(skippedList.classList.contains('expanded')).toBe(true);
+  });
+
+  it('disposes its controller on close so a parked sync never starts', async () => {
+    const context = createSyncContext([], 'mine.md', 'Nothing left here');
+    const plugin = pluginStub({
+      context,
+      singleAnalysis: analysis({ cardsToDelete: [deletion(11)] }),
+    });
+    let resolveConfirm: ((confirmed: boolean) => void) | undefined;
+    const confirm = vi.spyOn(ConfirmDeleteModal.prototype, 'confirm').mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConfirm = resolve;
+        })
+    );
+    const dispose = vi.spyOn(SyncModalController.prototype, 'dispose');
+    const modal = await openModal(plugin);
+
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+
+    modal.onClose();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(plugin.clearActiveSyncModal).toHaveBeenCalledWith(modal);
+
+    // The confirmation outlives the dialog and still resolves.
+    resolveConfirm?.(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
+    expect(modal.controller.phase).toBe('ready');
   });
 
   it('clears the active modal when it closes', () => {

@@ -59,7 +59,7 @@ export default class PandaZapPlugin extends Plugin {
   /** Abort tokens for silent runs, cancelled when the plugin unloads. */
   private silentSyncAborts = new Map<string, SyncAbortToken>();
   /** Abort tokens for direct runs, cancelled when the plugin unloads. */
-  private directSyncAborts = new Set<SyncAbortToken>();
+  private directSyncAborts = new Map<string, SyncAbortToken>();
   /** Session cache of whether a note already has Anki notes. */
   private noteHasCardsCache = new Map<string, boolean>();
   private syncStatusItem: HTMLElement | null = null;
@@ -176,7 +176,7 @@ export default class PandaZapPlugin extends Plugin {
     this.syncInFlight.clear();
     for (const abort of this.silentSyncAborts.values()) abort.cancelled = true;
     this.silentSyncAborts.clear();
-    for (const abort of this.directSyncAborts) abort.cancelled = true;
+    for (const abort of this.directSyncAborts.values()) abort.cancelled = true;
     this.directSyncAborts.clear();
     this.syncStatusItem = null;
   }
@@ -194,7 +194,14 @@ export default class PandaZapPlugin extends Plugin {
       this.reportSyncDialogOpen();
       return;
     }
-    const bContext = await this.captureBatchSyncContext(notePaths, includeEmptyNotes);
+    let bContext: BatchSyncContext;
+    try {
+      bContext = await this.captureBatchSyncContext(notePaths, includeEmptyNotes);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Sync failed: ${message}`);
+      return;
+    }
     if (bContext.contexts.size === 0) {
       new Notice('No Markdown notes with cards found');
       return;
@@ -348,8 +355,12 @@ export default class PandaZapPlugin extends Plugin {
     }
 
     // Claim every path before the first await, so a second invocation cannot
-    // start a second run while this one is still reading notes.
+    // start a second run while this one is still reading notes. The abort
+    // token is registered now too, so deleting a note during capture, analysis
+    // or the confirmation prompt stops the run before it writes anything.
     for (const notePath of notePaths) this.syncInFlight.add(notePath);
+    const abort: SyncAbortToken = { cancelled: false };
+    for (const notePath of notePaths) this.directSyncAborts.set(notePath, abort);
     try {
       const bContext = contexts
         ? createBatchSyncContext(new Map(contexts))
@@ -383,20 +394,14 @@ export default class PandaZapPlugin extends Plugin {
         confirmedDeletionIdsByNote = confirmed;
       }
 
-      const abort: SyncAbortToken = { cancelled: false };
-      this.directSyncAborts.add(abort);
-      try {
-        const result = await this.syncBatchCards(
-          bContext,
-          confirmedDeletionIdsByNote !== undefined,
-          confirmedDeletionIdsByNote,
-          { abort }
-        );
-        if (this.unloaded) return;
-        new Notice(describeSyncResultNotice(result));
-      } finally {
-        this.directSyncAborts.delete(abort);
-      }
+      const result = await this.syncBatchCards(
+        bContext,
+        confirmedDeletionIdsByNote !== undefined,
+        confirmedDeletionIdsByNote,
+        { abort }
+      );
+      if (this.unloaded) return;
+      new Notice(abort.cancelled ? 'Sync cancelled' : describeSyncResultNotice(result));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       // The migration guard already reported why this note cannot sync.
@@ -406,6 +411,7 @@ export default class PandaZapPlugin extends Plugin {
       if (!migrationBlocked) new Notice(`Sync failed: ${message}`);
     } finally {
       for (const notePath of notePaths) {
+        this.directSyncAborts.delete(notePath);
         this.syncInFlight.delete(notePath);
         this.runDeferredSilentSync(notePath);
       }
@@ -485,6 +491,8 @@ export default class PandaZapPlugin extends Plugin {
     this.noteHasCardsCache.delete(notePath);
     const abort = this.silentSyncAborts.get(notePath);
     if (abort) abort.cancelled = true;
+    const directAbort = this.directSyncAborts.get(notePath);
+    if (directAbort) directAbort.cancelled = true;
     if (this.syncStatusError?.notePath !== notePath) return;
     this.clearSyncStatusError();
     this.setSyncStatus(
@@ -668,7 +676,15 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = normalizeSettings(await this.loadData());
+    try {
+      this.settings = normalizeSettings(await this.loadData());
+    } catch (error: unknown) {
+      // A corrupt or unreadable data.json must not stop the plugin from
+      // loading; start from defaults and let the next save rewrite it.
+      console.warn('PandaZap: could not load settings, using defaults', error);
+      this.settings = { ...DEFAULT_SETTINGS, pendingTagMigrations: [] };
+      new Notice('Panda Zap: settings could not be read. Defaults are loaded.');
+    }
   }
 
   saveSettings(): Promise<void> {

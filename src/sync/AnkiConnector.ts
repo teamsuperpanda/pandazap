@@ -59,10 +59,7 @@ import {
 export class AnkiConnector {
   private settings: PandaZapSettings;
   private app: App;
-  private noteCache: {
-    deckName: string;
-    byFront: Map<string, NoteCacheEntry[]>;
-  } | null = null;
+  private noteCaches = new Map<string, Map<string, NoteCacheEntry[]>>();
   private cacheKey: string;
   private client: AnkiConnectClient;
   private clientEndpoint: string;
@@ -100,7 +97,7 @@ export class AnkiConnector {
 
   /** Drop cached notes so the next lookup re-reads Anki. */
   invalidateCache(): void {
-    this.noteCache = null;
+    this.noteCaches.clear();
   }
 
   async testConnection(): Promise<AnkiConnectionState> {
@@ -309,7 +306,12 @@ export class AnkiConnector {
     // Silent sync never overwrites an edit made in Anki, even when the setting allows it.
     const skipConflicts = runOptions?.skipConflicts === true;
 
-    if (this.settings.useNoteBased && notePath && cards.length > 0 && !isCancelled()) {
+    // A note path or a header override can name a deck that does not exist yet,
+    // and addNote refuses to create it, so make the target once per run. The
+    // shared default deck is assumed to exist and is not created per note.
+    const needsDeckCreation =
+      this.settings.useNoteBased || this.deckOverrideFor(noteContent) !== undefined;
+    if (needsDeckCreation && notePath && cards.length > 0 && !isCancelled()) {
       try {
         parseDeckId(
           await this.ankiConnectRequest('createDeck', {
@@ -447,21 +449,34 @@ export class AnkiConnector {
     const targetBack = backContentOverride !== undefined ? backContentOverride : card.answer;
 
     if (noteId && cached) {
-      const front = (cached.fields.Front?.value ?? '').trim();
-      const back = (cached.fields.Back?.value ?? '').trim();
+      // Re-read this note first: an edit made in Anki while the dialog sat open
+      // must still be detected, and its tag list must not be replaced from a
+      // stale analysis snapshot.
+      const [freshNote] = parseNotesInfo(
+        await this.ankiConnectRequest('notesInfo', { notes: [noteId] })
+      );
+      if (!freshNote) return { status: 'missing' };
+      const current: NoteCacheEntry = {
+        noteId: freshNote.noteId,
+        fields: freshNote.fields,
+        raw: freshNote,
+      };
+
+      const front = (current.fields.Front?.value ?? '').trim();
+      const back = (current.fields.Back?.value ?? '').trim();
       const qTrim = (card.question || '').trim();
       const aTrim = (targetBack || '').trim();
 
       if (fieldsMatch(front, qTrim) && fieldsMatch(back, aTrim)) {
         // The note already holds this content. Record the fingerprint so the
         // next edit made in Anki can be detected, without rewriting the fields.
-        await this.ensureNoteTags(noteId, cached, notePath, this.syncTagFor(front, back));
+        await this.ensureNoteTags(noteId, current, notePath, this.syncTagFor(front, back));
         return { status: 'identical' };
       }
 
       // The stored fingerprint records the Front and Back the plugin last
       // pushed. A different one means the note was edited directly in Anki.
-      if (this.isExternallyEdited(cached, front, back)) {
+      if (this.isExternallyEdited(current, front, back)) {
         if (skipConflicts || !this.settings.overwriteAnkiEdits) {
           // Skip the card and leave the note, its fields and its tag untouched.
           return { status: 'conflict' };
@@ -482,12 +497,10 @@ export class AnkiConnector {
       );
       await this.ensureNoteTags(
         noteId,
-        cached,
+        current,
         notePath,
         this.syncTagFor(card.question, targetBack)
       );
-      if (cached.fields.Front) cached.fields.Front.value = card.question;
-      if (cached.fields.Back) cached.fields.Back.value = targetBack;
       return { status: 'updated' };
     }
 
@@ -525,7 +538,9 @@ export class AnkiConnector {
     deckName?: string,
     noteContent?: string
   ): NoteCacheEntry | undefined {
-    const entries = this.noteCache?.byFront.get(normalizeField(card.question || ''));
+    const entries = deckName
+      ? this.noteCaches.get(deckName)?.get(normalizeField(card.question || ''))
+      : undefined;
     if (!entries?.length) return undefined;
 
     // Without a source note there is no ownership to match, so never claim a
@@ -892,13 +907,13 @@ export class AnkiConnector {
   }
 
   private async prefetchNotesForDeck(deckName: string): Promise<void> {
-    if (this.noteCache && this.noteCache.deckName === deckName) return;
-    const noteCache = { deckName, byFront: new Map<string, NoteCacheEntry[]>() };
+    if (this.noteCaches.has(deckName)) return;
+    const byFront = new Map<string, NoteCacheEntry[]>();
     const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
     const noteIds = parseNoteIds(await this.ankiConnectRequest('findNotes', { query }));
 
     if (noteIds.length === 0) {
-      this.noteCache = noteCache;
+      this.noteCaches.set(deckName, byFront);
       return;
     }
 
@@ -914,17 +929,17 @@ export class AnkiConnector {
         const id = ni.noteId;
         if (!id) continue;
         const entry: NoteCacheEntry = { noteId: id, fields: ni.fields, raw: ni };
-        const existing = noteCache.byFront.get(key);
+        const existing = byFront.get(key);
         if (existing) {
           existing.push(entry);
         } else {
-          noteCache.byFront.set(key, [entry]);
+          byFront.set(key, [entry]);
         }
       } catch (e: unknown) {
         console.warn('PandaZap: error caching note', e);
       }
     }
-    this.noteCache = noteCache;
+    this.noteCaches.set(deckName, byFront);
   }
 
   private getDeckName(notePath?: string, noteContent?: string): string {

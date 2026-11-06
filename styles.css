@@ -125,7 +125,8 @@
 .panda-zap-card-text { color: var(--text-normal); line-height: 1.4; overflow-wrap: anywhere; }
 
 
-.panda-zap-connection-result { margin: 10px 0 20px; padding: 12px; border-radius: 6px; border: 1px solid; display: none; }
+.panda-zap-connection-setting.setting-item { flex-wrap: wrap; }
+.panda-zap-connection-result { flex: 1 0 100%; width: 100%; box-sizing: border-box; margin: 10px 0 20px; padding: 12px; border-radius: 6px; border: 1px solid; display: none; }
 .panda-zap-connection-result:not(:empty) { display: block; }
 .panda-zap-connection-result.loading { background: var(--background-secondary); border-color: var(--text-muted); animation: panda-zap-pulse 1.2s ease-in-out infinite alternate; }
 .panda-zap-connection-result.connected { background: color-mix(in srgb, var(--color-green) 12%, transparent); border-color: var(--color-green); }

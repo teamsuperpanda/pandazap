@@ -110,6 +110,13 @@ class FakeToggle {
 
 class FakeSetting {
   descEl = { textContent: '' };
+  settingEl = {
+    classes: new Set<string>(),
+    addClass: (name: string): void => {
+      this.settingEl.classes.add(name);
+    },
+    createDiv: (cls: string): { className: string } => ({ className: cls }),
+  };
   dropdowns: FakeDropdown[] = [];
   buttons: FakeButton[] = [];
   toggles: FakeToggle[] = [];
@@ -324,5 +331,54 @@ describe('settings pickers', () => {
     renderSetting(tab, 'Default deck');
     await flush();
     expect(plugin.listAnkiNames).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs one more read when Refresh arrives while a read is in flight', async () => {
+    const plugin = pluginStub();
+    let releaseFirst: ((names: { deckNames: string[]; modelNames: string[] }) => void) | undefined;
+    const first = new Promise<{ deckNames: string[]; modelNames: string[] }>((resolve) => {
+      releaseFirst = resolve;
+    });
+    plugin.listAnkiNames
+      .mockReturnValueOnce(first)
+      .mockResolvedValue({ deckNames: ['Default', 'French'], modelNames: ['Basic'] });
+
+    const setting = renderSetting(createTab(plugin), 'Default deck');
+    setting.buttons[0].click();
+
+    releaseFirst?.({ deckNames: ['Default', 'Old'], modelNames: ['Basic'] });
+
+    await vi.waitFor(() => expect(plugin.listAnkiNames).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(setting.dropdown.optionValues).toEqual(['Default', 'French']));
+  });
+
+  it('keeps the hint up when the endpoint changes while a read is in flight', async () => {
+    const plugin = pluginStub();
+    let releaseFirst: ((names: { deckNames: string[]; modelNames: string[] }) => void) | undefined;
+    const first = new Promise<{ deckNames: string[]; modelNames: string[] }>((resolve) => {
+      releaseFirst = resolve;
+    });
+    plugin.listAnkiNames.mockReturnValueOnce(first);
+
+    const tab = createTab(plugin);
+    const setting = renderSetting(tab, 'Default deck');
+    plugin.settings.ankiConnectPort = 9000;
+
+    releaseFirst?.({ deckNames: ['Default', 'StaleDeck'], modelNames: ['Basic'] });
+    await flush();
+    await flush();
+
+    // The old endpoint's names are not adopted, and the row does not pretend
+    // the list is current: the hint is left until the next read succeeds.
+    expect(setting.dropdown.optionValues).toEqual(['Default']);
+    expect(setting.descEl.textContent).toContain('Loading names from Anki');
+    expect(plugin.listAnkiNames).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the connection banner span the row instead of squeezing the button', () => {
+    const tab = createTab(pluginStub());
+    const setting = renderSetting(tab, 'Test Anki connection');
+
+    expect(setting.settingEl.classes.has('panda-zap-connection-setting')).toBe(true);
   });
 });

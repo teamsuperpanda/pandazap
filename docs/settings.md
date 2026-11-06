@@ -35,7 +35,7 @@ Keep Anki running and reachable at this address while syncing.
 
 - **Default Deck**
   - The Anki deck used for all cards when note-based deck organization is off, and the fallback when no `Deck::` override is present (default: `Default`).
-  - Set it in the plugin settings. An empty or multi-line value is rejected in the settings UI, and falls back to `Default` when read from a corrupt `data.json`.
+  - Pick it from a dropdown of the decks in your Anki collection. The saved value stays selectable while Anki is unreachable. An empty or multi-line value is rejected in the settings UI, and falls back to `Default` when read from a corrupt `data.json`.
 
 - **Use Note-Based Decks**
   - When enabled, Panda Zap will create or map Anki decks based on the note path in your vault (folder::NoteName). If disabled the plugin uses the configured Default Deck for all created notes.
@@ -57,9 +57,19 @@ Keep Anki running and reachable at this address while syncing.
 ### Note Type (IMPORTANT)
 
 - **Note Type**
-  - The Anki note type/model used when creating new notes (e.g., `Basic`, `Cloze`). Make sure this matches a model that exists in your Anki collection.
+  - The Anki note type/model used when creating new notes (e.g., `Basic`, `Cloze`). Pick it from a dropdown of the note types in your Anki collection; the saved value stays selectable while Anki is unreachable.
    - The plugin always writes to two fields named `Front` and `Back`. Use a Basic-style note type that has these fields.
    - Do not select Cloze or other note types that do not expose `Front` and `Back` fields - they will lead to incorrect notes or sync errors.
+
+### Maintenance
+
+- **Renaming and moving notes**
+  - Renaming or moving a note migrates its cards to the new name, deck and source tag instead of leaving them behind in Anki. Migration runs on the rename itself, on plugin load, and before a sync, so a rename made while Anki was unreachable is retried. A note whose migration still fails is not synced, and a notice names it.
+  - If older cards cannot be identified with certainty, Panda Zap leaves them alone and tells you they may remain in Anki. New cards from the note are still migrated.
+
+- **Clean up orphaned media**
+  - Run "Panda Zap: Clean up orphaned media" from the command palette. It lists images uploaded by Panda Zap that no Anki note references, verifies the list, and asks for confirmation before deleting anything. The check runs again after you confirm, so an image that becomes referenced in the meantime is kept.
+  - Media cleanup and syncing cannot run at the same time.
 
 ### Presentation
 

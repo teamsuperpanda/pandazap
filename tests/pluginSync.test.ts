@@ -40,6 +40,7 @@ import {
   type SyncRunOptions,
 } from '../src/sync/types';
 import { TFile } from 'obsidian';
+import { installFakeAnki } from './fakeAnki';
 
 function connectorStub() {
   return {
@@ -52,12 +53,14 @@ function connectorStub() {
 
 function createPlugin(
   connector: ReturnType<typeof connectorStub>,
-  notes: Record<string, string> = {}
+  notes: Record<string, string> = {},
+  unreadablePaths: readonly string[] = []
 ): PandaZapPlugin {
   const plugin = Object.create(PandaZapPlugin.prototype) as PandaZapPlugin;
   const files = new Map(
     Object.entries(notes).map(([path, content]) => [path, { content, file: new TFile() }])
   );
+  const unreadable = new Set(unreadablePaths);
   const internals = plugin as unknown as {
     settings: PandaZapSettings;
     ankiConnector: ReturnType<typeof connectorStub>;
@@ -78,8 +81,10 @@ function createPlugin(
     vault: {
       getAbstractFileByPath: (path: string) => files.get(path)?.file ?? null,
       read: async (file: TFile) => {
-        for (const entry of files.values()) {
-          if (entry.file === file) return entry.content;
+        for (const [path, entry] of files) {
+          if (entry.file !== file) continue;
+          if (unreadable.has(path)) throw new Error(`could not read ${path}`);
+          return entry.content;
         }
         return '';
       },
@@ -367,5 +372,127 @@ describe('batch sync progress and cancellation', () => {
 
     expect(connector.syncCards).toHaveBeenCalledTimes(1);
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('batch deletion in a shared default deck', () => {
+  const oneContent = 'Q: One question\nA: One answer';
+  const twoContent = 'Q: Two question\nA: Two answer';
+
+  function sharedDeckPlugin() {
+    const settings: PandaZapSettings = {
+      ...DEFAULT_SETTINGS,
+      useNoteBased: false,
+      defaultDeck: 'Default',
+    };
+    const oneTag = sourceTag('one.md');
+    const twoTag = sourceTag('two.md');
+    const anki = installFakeAnki(requestUrl, {
+      notes: [
+        {
+          noteId: 11,
+          front: 'One question',
+          back: 'One answer',
+          tags: ['panda-zap', oneTag],
+          cards: [110],
+        },
+        // Both notes keep a stale card with the same Front, so only the source
+        // tag can decide which note owns which deletion.
+        {
+          noteId: 12,
+          front: 'Stale question',
+          back: 'old',
+          tags: ['panda-zap', oneTag],
+          cards: [120],
+        },
+        {
+          noteId: 21,
+          front: 'Two question',
+          back: 'Two answer',
+          tags: ['panda-zap', twoTag],
+          cards: [210],
+        },
+        {
+          noteId: 22,
+          front: 'Stale question',
+          back: 'old',
+          tags: ['panda-zap', twoTag],
+          cards: [220],
+        },
+      ],
+      cards: [
+        { cardId: 110, note: 11, deckName: 'Default' },
+        { cardId: 120, note: 12, deckName: 'Default' },
+        { cardId: 210, note: 21, deckName: 'Default' },
+        { cardId: 220, note: 22, deckName: 'Default' },
+      ],
+    });
+    const connector = new AnkiConnector(settings, {} as never);
+    const plugin = createPlugin(connector as never, {
+      'one.md': oneContent,
+      'two.md': twoContent,
+    });
+    plugin.settings = settings;
+    (plugin as unknown as { ankiConnector: AnkiConnector }).ankiConnector = connector;
+    return { plugin, anki };
+  }
+
+  it('deletes only its own stale notes and leaves the other card alone', async () => {
+    const { plugin, anki } = sharedDeckPlugin();
+    const bContext = createBatchSyncContext(
+      new Map([
+        [
+          'one.md',
+          createSyncContext(
+            [{ question: 'One question', answer: 'One answer' }],
+            'one.md',
+            oneContent
+          ),
+        ],
+        [
+          'two.md',
+          createSyncContext(
+            [{ question: 'Two question', answer: 'Two answer' }],
+            'two.md',
+            twoContent
+          ),
+        ],
+      ])
+    );
+
+    const analysis = await plugin.analyzeBatchSyncOperation(bContext);
+
+    expect(analysis.cardsToDelete.map((card) => [card.notePath, card.existingCardId])).toEqual([
+      ['one.md', 12],
+      ['two.md', 22],
+    ]);
+
+    const confirmed = new Map(
+      analysis.cardsToDelete.map((card) => [
+        card.notePath as string,
+        [card.existingCardId as number],
+      ])
+    );
+    await plugin.syncBatchCards(bContext, true, confirmed);
+
+    const deletions = anki.requests
+      .filter((request) => request.action === 'deleteNotes')
+      .map((request) => request.params?.notes);
+    expect(deletions).toEqual([[12], [22]]);
+    expect(anki.notes.map((note) => note.noteId).sort()).toEqual([11, 21]);
+    expect(anki.cards.map((card) => card.cardId).sort()).toEqual([110, 210]);
+  });
+});
+
+describe('batch dialog capture failure', () => {
+  it('shows the failure notice instead of opening a dialog', async () => {
+    notices.length = 0;
+    openSyncModal.mockReset();
+    const plugin = createPlugin(connectorStub(), { 'broken.md': 'Q: Q\nA: A' }, ['broken.md']);
+
+    await expect(plugin.openBatchSyncDialog(['broken.md'])).resolves.toBeUndefined();
+
+    expect(openSyncModal).not.toHaveBeenCalled();
+    expect(notices).toContain('Sync failed: could not read broken.md');
   });
 });

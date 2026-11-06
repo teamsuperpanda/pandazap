@@ -66,6 +66,10 @@ export class PandaZapSettingTab extends PluginSettingTab {
   /** Deck and note type names for the connection settings they came from. */
   private pickerLists: PickerLists | null = null;
   private pickerLoad: Promise<void> | null = null;
+  /** Endpoint the in-flight names read was started for. */
+  private pickerLoadKey = '';
+  /** A refresh arrived while a read was in flight and must run after it. */
+  private pickerReloadRequested = false;
 
   constructor(app: App, plugin: PandaZapPlugin) {
     super(app, plugin);
@@ -227,6 +231,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
             name: 'Test Anki connection',
             desc: 'Test the connection to Anki connect.',
             render: (setting) => {
+              setting.settingEl.addClass('panda-zap-connection-setting');
               setting.addButton((button) =>
                 button.setButtonText('Test connection').onClick(() => {
                   void this.testConnection();
@@ -344,7 +349,12 @@ export class PandaZapSettingTab extends PluginSettingTab {
       return;
     }
     if (this.pickerLoad !== null) {
-      // One read serves every caller; the owner reports its outcome.
+      // One read serves every caller; the owner reports its outcome. A forced
+      // refresh, or a caller asking for a different endpoint than the read in
+      // flight, must not be swallowed: ask the owner to read once more.
+      if (force || this.pickerLoadKey !== this.currentPickerKey()) {
+        this.pickerReloadRequested = true;
+      }
       try {
         await this.pickerLoad;
       } catch {
@@ -359,14 +369,22 @@ export class PandaZapSettingTab extends PluginSettingTab {
     this.fillPickers();
     const load = this.loadPickerLists(key);
     this.pickerLoad = load;
+    this.pickerLoadKey = key;
     try {
       await load;
       this.fillPickers();
-      this.setPickerHints(null);
+      if (this.pickerLists?.key === this.currentPickerKey()) this.setPickerHints(null);
     } catch {
       this.setPickerHints(PICKER_OFFLINE_HINT);
     } finally {
-      if (this.pickerLoad === load) this.pickerLoad = null;
+      if (this.pickerLoad === load) {
+        this.pickerLoad = null;
+        this.pickerLoadKey = '';
+        if (this.pickerReloadRequested) {
+          this.pickerReloadRequested = false;
+          void this.refreshPickerLists(true);
+        }
+      }
     }
   }
 
@@ -553,13 +571,10 @@ export class PandaZapSettingTab extends PluginSettingTab {
     if (state.status === 'ok') {
       resultEl.className = 'panda-zap-connection-result connected';
       const connectedEl = resultEl.createDiv('panda-zap-connection-content');
-      connectedEl.createSpan({
-        cls: 'panda-zap-connection-text',
-        text: describeConnection(state, ANKI_CONNECT_VERSION),
-      });
+      connectedEl.createSpan({ cls: 'panda-zap-connection-text', text: 'Connected' });
       connectedEl.createSpan({
         cls: 'panda-zap-connection-details',
-        text: `${this.plugin.settings.ankiConnectUrl}:${this.plugin.settings.ankiConnectPort}`,
+        text: `AnkiConnect ${state.version ?? ''} at ${buildAnkiConnectUrl(this.plugin.settings)}`,
       });
       void this.refreshPickerLists(true);
       return;

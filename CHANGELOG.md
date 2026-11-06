@@ -2,11 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-- Added "Sync current note to Anki" and a Markdown file-menu entry for direct single-note and multi-note syncing.
-- Added an opt-in "Sync on save" setting that syncs notes already in Anki after a short delay.
-- Updated development dependencies to their latest compatible releases.
-- Fixed: security advisories GHSA-g3hv-75wg-m249 (minimatch) and GHSA-4p3w-j4w9-5jqw (moment) no longer affect the dependency tree.
+## [1.2.0] - 2026-11-07
+- Pick the default deck and note type from dropdowns filled from your Anki collection instead of typing names by hand.
+- Set a deck per note with a `deck:` key in YAML frontmatter. It wins over a first-line `Deck::` override.
+- Sync the current note in one step from the command palette, or right-click one or more Markdown files and choose "Sync note(s) to Anki". Deletions are still confirmed first.
+- Optionally sync notes that already exist in Anki shortly after you save them, without a dialog.
+- Cards stay attached to their note when you rename or move it: source tags and decks are migrated, and a pending migration is retried if Anki was unreachable at the time.
+- Run "Clean up orphaned media" to remove images uploaded by Panda Zap that no Anki note references any more. The list is verified before and after you confirm.
+- Cards changed directly in Anki are detected and skipped instead of overwritten. "Overwrite changes made in Anki" makes sync use your note's version instead; sync on save always skips them.
+- Only one sync dialog runs at a time. The sync screen shows per-card progress and lets you cancel, keeping the cards already processed.
+- Fixed: notes sharing the default deck could update or delete another note's cards. A sync now only touches its own note, and an emptied note can remove the cards it left behind.
+- Fixed: cards are no longer extracted from indented code blocks or HTML comments.
+- Fixed: the sync screen distinguishes an unreachable Anki from an outdated AnkiConnect and a protocol error, and shows an analysis error with a retry button instead of reporting the connection as down.
+- Added validation for the Anki host, port, deck name and marker words in settings. Invalid values keep the last valid value, and duplicate marker words are flagged.
+- Faster syncing: the deck lookup is reused between preview and sync, requests time out after 5 seconds instead of hanging, and safe requests are retried.
+- Modals use Obsidian theme colours, fit screens down to 400 px, and their section headers work from the keyboard.
+- Fixed: deleting a note during a direct sync stops the run before it writes any more cards.
+- Fixed: a corrupt or unreadable `data.json` no longer stops the plugin from loading; settings fall back to their defaults.
+- Fixed: the settings connection test result now uses the full width under its row instead of squeezing the "Test connection" button.
+- Updated development dependencies to their latest compatible releases. Security advisories GHSA-g3hv-75wg-m249 (minimatch) and GHSA-4p3w-j4w9-5jqw (moment) no longer affect the dependency tree.
 
 ## [1.1.2] - 2026-10-25
 - Updated dependencies and build tooling to their latest compatible releases.

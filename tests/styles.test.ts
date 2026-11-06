@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
+describe('connection banner layout', () => {
+  it('wraps the row so the banner spans the full width under it', () => {
+    expect(css).toMatch(/\.panda-zap-connection-setting\.setting-item\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.panda-zap-connection-result\s*\{[^}]*flex:\s*1 0 100%/);
+    expect(css).toMatch(/\.panda-zap-connection-result\s*\{[^}]*width:\s*100%/);
+  });
+});
+
 /**
  * Rule selectors in the stylesheet, without comments, at-rules or the
  * `from`/`to`/`50%` steps inside keyframes.

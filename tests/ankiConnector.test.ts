@@ -17,7 +17,8 @@ import {
   formatSyncResult,
   type AnkiNoteInfo,
 } from '../src/sync/types';
-import { REQUEST_TIMEOUT_MS, RETRY_BACKOFF_BASE_MS } from '../src/constants';
+import { REQUEST_TIMEOUT_MS, RETRY_BACKOFF_BASE_MS, SYNC_HASH_TAG_PREFIX } from '../src/constants';
+import { installFakeAnki } from './fakeAnki';
 
 const settings = { ...DEFAULT_SETTINGS, useNoteBased: true };
 const deckSettings = { ...DEFAULT_SETTINGS, useNoteBased: false };
@@ -308,13 +309,15 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
         action: string;
-        params?: { note?: { id?: string } };
+        params?: { note?: { id?: string }; notes?: number[] };
       };
       if (body.action === 'version') return response(6);
       if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([11, 22]);
       if (body.action === 'notesInfo') {
-        return response([note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [mineSourceTag])]);
+        const asked = body.params?.notes ?? [];
+        const all = [note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [mineSourceTag])];
+        return response(all.filter((entry) => asked.includes(entry.noteId)));
       }
       if (body.action === 'updateNoteFields') {
         expect(body.params?.note?.id).toBe(22);
@@ -728,7 +731,8 @@ describe('AnkiConnector', () => {
 
     expect(formatSyncResult(result)).toEqual(['Skipped (already up-to-date): Q -> Default']);
     expect(deckLookups('Default')).toHaveLength(1);
-    expect(requests('notesInfo')).toHaveLength(1);
+    // The deck read is reused, plus one targeted re-read of the matched note.
+    expect(requests('notesInfo')).toHaveLength(2);
   });
 
   it('refreshes the cached deck when the connection port changes', async () => {
@@ -818,7 +822,8 @@ describe('AnkiConnector', () => {
     await connector.syncCards(cards, 'mine.md');
 
     expect(deckLookups('Default')).toHaveLength(2);
-    expect(requests('notesInfo')).toHaveLength(2);
+    // Two deck reads plus one targeted re-read per sync run.
+    expect(requests('notesInfo')).toHaveLength(4);
   });
 
   it('keeps one deck lookup across a shared-deck batch', async () => {
@@ -1009,5 +1014,118 @@ describe('AnkiConnector', () => {
     expect(requests('deleteNotes')).toHaveLength(0);
     expect(result.deletion).toBeUndefined();
     expect(result.cards).toEqual([{ card, status: 'added', deckName: 'mine' }]);
+  });
+
+  it('detects an Anki edit made after the analysis instead of rewriting the stale snapshot', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const anki = installFakeAnki(requestUrl);
+    const card = { question: 'Q', answer: 'A' };
+    const content = 'Q: Q\nA: A';
+
+    await connector.syncCards([card], 'mine.md', content);
+    connector.invalidateCache();
+    const note = anki.notes[0];
+
+    // The dialog analyses the unchanged card, so nothing is reported to update.
+    const analysis = await connector.analyzeSyncOperation([card], 'mine.md', content);
+    expect(analysis.cardsToUpdate).toEqual([]);
+    expect(analysis.cardsInConflict).toEqual([]);
+
+    // The user then edits the note in Anki while the dialog sits open.
+    note.back = 'Edited in Anki';
+    note.tags = [
+      ...note.tags.filter((tag) => !tag.startsWith(SYNC_HASH_TAG_PREFIX)),
+      `${SYNC_HASH_TAG_PREFIX}edited`,
+    ];
+    const tagsBefore = [...note.tags];
+    anki.requests.length = 0;
+
+    const result = await connector.syncCards([card], 'mine.md', content);
+
+    expect(result.cards).toEqual([
+      { card, status: 'conflict', deckName: 'Default', reason: 'changed in Anki' },
+    ]);
+    expect(anki.requests.map((request) => request.action)).not.toContain('updateNoteFields');
+    expect(anki.requests.map((request) => request.action)).not.toContain('updateNoteTags');
+    expect(note.back).toBe('Edited in Anki');
+    expect(note.tags).toEqual(tagsBefore);
+  });
+
+  it('keeps a note cache per deck across an interleaved analysis and sync', async () => {
+    const connector = new AnkiConnector(settings, app);
+    const anki = installFakeAnki(requestUrl);
+    const card = { question: 'Q', answer: 'A' };
+
+    await connector.syncCards([card], 'a/one.md');
+    await connector.syncCards([card], 'b/two.md');
+    connector.invalidateCache();
+    expect(anki.notes).toHaveLength(2);
+
+    // Both notes are analysed before either is synced, as a batch would do.
+    await connector.analyzeSyncOperation([card], 'a/one.md');
+    await connector.analyzeSyncOperation([card], 'b/two.md');
+
+    // One fresh deck read per analysis; the syncs must reuse both caches rather
+    // than re-read a clobbered one and add a duplicate note.
+    const oneReads = deckLookups('a::one').length;
+    const twoReads = deckLookups('b::two').length;
+
+    const [first, second] = await Promise.all([
+      connector.syncCards([card], 'a/one.md'),
+      connector.syncCards([card], 'b/two.md'),
+    ]);
+
+    expect(first.cards).toEqual([{ card, status: 'skipped-identical', deckName: 'a::one' }]);
+    expect(second.cards).toEqual([{ card, status: 'skipped-identical', deckName: 'b::two' }]);
+
+    const again = await connector.syncCards([card], 'a/one.md');
+    expect(again.cards).toEqual([{ card, status: 'skipped-identical', deckName: 'a::one' }]);
+
+    // Each deck stays cached, so no run re-reads it or adds a duplicate note.
+    expect(deckLookups('a::one')).toHaveLength(oneReads);
+    expect(deckLookups('b::two')).toHaveLength(twoReads);
+    expect(requests('addNote')).toHaveLength(2);
+    expect(anki.notes).toHaveLength(2);
+  });
+
+  it('creates the deck named by an override even when note-based decks are off', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const anki = installFakeAnki(requestUrl);
+    const card = { question: 'Hola', answer: 'Hello' };
+
+    const result = await connector.syncCards(
+      [card],
+      'mine.md',
+      '---\ndeck: Spanish\n---\nQ: Hola\nA: Hello'
+    );
+
+    expect(result.cards).toEqual([{ card, status: 'added', deckName: 'Spanish' }]);
+    expect(requests('createDeck').map((request) => request.params)).toEqual([{ deck: 'Spanish' }]);
+    expect(requests('addNote')[0].params?.note).toMatchObject({ deckName: 'Spanish' });
+    expect(anki.cards[0].deckName).toBe('Spanish');
+  });
+
+  it('reports a failed source-tag migration after the deck already moved', async () => {
+    const connector = new AnkiConnector(settings, app);
+    const oldTag = sourceTag('folder/note.md');
+    const newTag = sourceTag('other/renamed.md');
+    const anki = installFakeAnki(requestUrl, {
+      notes: [{ noteId: 11, front: 'Q', back: 'A', tags: ['panda-zap', oldTag], cards: [11] }],
+      cards: [{ cardId: 11, note: 11, deckName: 'folder::note' }],
+    });
+    anki.failActions.add('updateNoteTags');
+
+    await expect(
+      connector.migrateSourceTag('folder/note.md', 'other/renamed.md', 'Q: Q\nA: A')
+    ).rejects.toThrow('updateNoteTags failed');
+
+    // The deck move happened first, so a retry still finds the note by its old
+    // tag; nothing claims the tags moved to the new path.
+    expect(requests('changeDeck').map((request) => request.params)).toEqual([
+      { cards: [11], deck: 'other::renamed' },
+    ]);
+    expect(anki.cards[0].deckName).toBe('other::renamed');
+    expect(anki.notes[0].tags).toEqual(['panda-zap', oldTag]);
+    expect(anki.notes[0].tags).not.toContain(newTag);
   });
 });

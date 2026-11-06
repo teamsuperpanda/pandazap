@@ -529,6 +529,37 @@ describe('note rename migration', () => {
     expect(plugin.settings.pendingTagMigrations).toEqual([]);
   });
 
+  it('keeps the rename queued when the deck moved but the tag write failed', async () => {
+    loadData.mockImplementation(async () => ({ ...DEFAULT_SETTINGS, useNoteBased: true }));
+    const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
+    const plugin = await loadPlugin(harness);
+    const oldTag = sourceTag('folder/note.md');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'folder::note');
+    anki.failActions.add('updateNoteTags');
+
+    await renameTo(harness, plugin, 'folder/note.md', 'other/renamed.md', 'Q: Q\nA: A');
+
+    // The deck move is already done, so the retry must keep the old tag or the
+    // note would be lost for the next sync.
+    expect(anki.cards[0].deckName).toBe('other::renamed');
+    expect(anki.notes[0].tags).toEqual(['panda-zap', oldTag]);
+    expect(plugin.settings.pendingTagMigrations).toEqual([
+      { fromPath: 'folder/note.md', toPath: 'other/renamed.md' },
+    ]);
+    expect(saveData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pendingTagMigrations: [{ fromPath: 'folder/note.md', toPath: 'other/renamed.md' }],
+      })
+    );
+
+    // The queued entry still blocks a sync of the renamed note.
+    const syncCards = vi.spyOn(connectorOf(plugin), 'syncCards');
+    await expect(
+      plugin.syncCardsToAnki(false, createSyncContext([], 'other/renamed.md', ''))
+    ).rejects.toThrow('renamed note "other/renamed.md"');
+    expect(syncCards).not.toHaveBeenCalled();
+  });
+
   it('keeps draining other entries and blocks only the affected sync', async () => {
     const harness = createHarness({ 'a/new.md': 'Q: Q\nA: A', 'b/new.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);

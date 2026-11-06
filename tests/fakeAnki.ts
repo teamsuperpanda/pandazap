@@ -200,6 +200,14 @@ export function installFakeAnki(
         });
         return ok(nextNoteId);
       }
+      case 'deleteNotes': {
+        const ids = ((request.params?.notes as unknown[]) ?? []).map(Number);
+        const removed = state.notes.filter((note) => ids.includes(note.noteId));
+        const removedCards = new Set(removed.flatMap((note) => note.cards));
+        state.notes = state.notes.filter((note) => !ids.includes(note.noteId));
+        state.cards = state.cards.filter((card) => !removedCards.has(card.cardId));
+        return ok(null);
+      }
       case 'updateNoteFields': {
         const params = request.params?.note as
           { id?: number; fields?: Record<string, string> } | undefined;

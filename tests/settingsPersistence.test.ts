@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { saveData, loadData } = vi.hoisted(() => ({ saveData: vi.fn(), loadData: vi.fn() }));
+const { saveData, loadData, notices } = vi.hoisted(() => ({
+  saveData: vi.fn(),
+  loadData: vi.fn(),
+  notices: [] as string[],
+}));
 
 vi.mock('obsidian', () => ({
   MarkdownView: class {},
   Modal: class {},
+  Notice: class {
+    constructor(message: string) {
+      notices.push(message);
+    }
+  },
   setIcon: () => undefined,
   Plugin: class {
     saveData = saveData;
@@ -51,6 +60,17 @@ describe('settings persistence', () => {
       ...DEFAULT_SETTINGS,
       ankiConnectPort: 9000,
     });
+  });
+
+  it('falls back to the defaults when the stored data cannot be read', async () => {
+    loadData.mockReset();
+    loadData.mockRejectedValue(new Error('data.json is corrupt'));
+    const plugin = new PandaZapPlugin({} as never, {} as never);
+
+    await plugin.loadSettings();
+
+    expect(plugin.settings).toEqual(DEFAULT_SETTINGS);
+    expect(notices).toContain('Panda Zap: settings could not be read. Defaults are loaded.');
   });
 
   it('normalizes settings in memory and on disk before writing', async () => {

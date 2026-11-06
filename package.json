@@ -1,6 +1,6 @@
 {
   "name": "panda-zap",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "type": "module",
   "description": "Obsidian plugin with Anki Connect integration by Team Super Panda",
   "main": "main.js",
@@ -33,7 +33,7 @@
     "@vitest/coverage-v8": "^5.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
-    "eslint-plugin-obsidianmd": "^0.5.0",
+    "eslint-plugin-obsidianmd": "^0.5.1",
     "jsdom": "^29.1.1",
     "obsidian": "^1.14.4",
     "prettier": "^3.9.10",
