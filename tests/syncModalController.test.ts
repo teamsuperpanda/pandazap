@@ -248,6 +248,19 @@ describe('SyncModalController deletion aggregation', () => {
     expect(syncSingle).toHaveBeenCalledTimes(1);
   });
 
+  it('never starts a run when the view is already closed', async () => {
+    const syncSingle = vi.fn().mockResolvedValue({ cards: [] });
+    const controller = createController({
+      operations: operations({ syncSingle }),
+    });
+
+    await controller.connect();
+    controller.dispose();
+
+    expect(await controller.runSync()).toEqual({ status: 'disposed' });
+    expect(syncSingle).not.toHaveBeenCalled();
+  });
+
   it('never starts a run when the view closed while the prompt was pending', async () => {
     let resolveConfirm: ((confirmed: boolean) => void) | undefined;
     const confirmDeletion = vi.fn(

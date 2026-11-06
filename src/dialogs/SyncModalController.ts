@@ -234,6 +234,7 @@ export class SyncModalController {
   }
 
   private async runSyncRequest(): Promise<SyncRunOutcome> {
+    if (this.disposed) return { status: 'disposed' };
     // The analysis can still be missing (a failed load is ignored on older
     // paths); load it so deletions can be prompted for.
     if (!this.analysis) {

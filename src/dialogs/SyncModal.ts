@@ -412,6 +412,11 @@ export class SyncModal extends Modal {
       case 'completed':
         new Notice(describeSyncResultNotice(outcome.result, this.controller.progress ?? undefined));
         return;
+      default: {
+        const unreachable: never = outcome;
+        void unreachable;
+        return;
+      }
     }
   }
 
