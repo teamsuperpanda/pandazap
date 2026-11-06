@@ -40,8 +40,8 @@ describe('CardExtractor (unit tests)', () => {
 
       const text = 'Q: Test I: Image A: Ans';
       const matches = text.match(regex);
-      expect(matches).not.toBeNull();
-      expect(matches.length).toBe(3);
+      if (!matches) throw new Error('expected marker matches');
+      expect(matches).toHaveLength(3);
       expect(matches[0].trim()).toBe('Q:');
       expect(matches[1].trim()).toBe('I:');
       expect(matches[2].trim()).toBe('A:');

@@ -59,7 +59,7 @@ function pickerOptions(names: readonly string[], savedValue: string): Record<str
 
 export class PandaZapSettingTab extends PluginSettingTab {
   plugin: PandaZapPlugin;
-  private connectionResultEl: HTMLElement;
+  private connectionResultEl: HTMLElement | null = null;
   private deckDropdown: DropdownComponent | null = null;
   private noteTypeDropdown: DropdownComponent | null = null;
   private pickerSettings: Partial<Record<PickerKind, Setting>> = {};
@@ -537,18 +537,22 @@ export class PandaZapSettingTab extends PluginSettingTab {
   }
 
   private async testConnection(): Promise<void> {
-    this.connectionResultEl.empty();
+    const resultEl = this.connectionResultEl;
+    // The button that starts a test is rendered with the result element.
+    if (!resultEl) return;
 
-    this.connectionResultEl.className = 'panda-zap-connection-result loading';
-    const loadingEl = this.connectionResultEl.createDiv('connection-content');
+    resultEl.empty();
+
+    resultEl.className = 'panda-zap-connection-result loading';
+    const loadingEl = resultEl.createDiv('connection-content');
     loadingEl.createSpan({ cls: 'connection-icon', text: 'loading' });
     loadingEl.createSpan({ cls: 'connection-text', text: 'Testing connection...' });
 
     const state = await this.plugin.testAnkiConnectionStatus();
-    this.connectionResultEl.empty();
+    resultEl.empty();
     if (state.status === 'ok') {
-      this.connectionResultEl.className = 'panda-zap-connection-result connected';
-      const connectedEl = this.connectionResultEl.createDiv('connection-content');
+      resultEl.className = 'panda-zap-connection-result connected';
+      const connectedEl = resultEl.createDiv('connection-content');
       connectedEl.createSpan({
         cls: 'connection-text',
         text: describeConnection(state, ANKI_CONNECT_VERSION),
@@ -562,13 +566,13 @@ export class PandaZapSettingTab extends PluginSettingTab {
     }
 
     const isProtocolIssue = state.status === 'version-too-old' || state.status === 'protocol-error';
-    this.connectionResultEl.className = `panda-zap-connection-result ${isProtocolIssue ? 'error' : 'disconnected'}`;
-    const resultEl = this.connectionResultEl.createDiv('connection-content');
-    resultEl.createSpan({
+    resultEl.className = `panda-zap-connection-result ${isProtocolIssue ? 'error' : 'disconnected'}`;
+    const detailsEl = resultEl.createDiv('connection-content');
+    detailsEl.createSpan({
       cls: 'connection-icon',
       text: isProtocolIssue ? 'error' : 'disconnected',
     });
-    resultEl.createSpan({
+    detailsEl.createSpan({
       cls: 'connection-text',
       text: describeConnection(state, ANKI_CONNECT_VERSION),
     });

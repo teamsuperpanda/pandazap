@@ -101,7 +101,10 @@ function parseImagePath(text: string): string | null {
   return clean;
 }
 
-export function extractQACardsFromText(content: string, settings: PandaZapSettings): AnkiCard[] {
+export function extractQACardsFromText(
+  content: string | null,
+  settings: PandaZapSettings | null
+): AnkiCard[] {
   if (!content || !settings) {
     return [];
   }
@@ -301,7 +304,7 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       if (qMatch) {
         const questionText = qMatch[1].replace(aLabelAtEnd, '').replace(iLabelAtEnd, '').trim();
         const answerLines: string[] = [];
-        let imagePath: string | undefined = undefined;
+        let imagePath: string | null = null;
         let hasAnswer = false;
 
         let currentMode: 'none' | 'answer' | 'image' = 'none';
