@@ -1,56 +1,10 @@
 import { AnkiCard, PandaZapSettings } from './types';
-import { buildMarkerRegexes, escapeRegex } from './markers';
+import { buildMarkerRegexes } from './markers';
+import { parseNoteHeader } from './noteHeader';
 
-const FRONTMATTER_DECK_KEY = /^deck\s*:\s*(.*)$/;
-
-/** Anki nests decks with `::`, while note overrides accept either separator. */
-function normalizeDeckTarget(value: string | undefined): string | undefined {
-  const target = (value ?? '').trim().replace(/\//g, '::');
-  return target || undefined;
-}
-
-/** Drops one matching pair of YAML single or double quotes around a value. */
-function stripYamlQuotes(value: string): string {
-  const trimmed = value.trim();
-  const quote = trimmed[0];
-  if (trimmed.length >= 2 && (quote === '"' || quote === "'") && trimmed.endsWith(quote)) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-/**
- * Reads the deck a note targets from its header. A leading YAML frontmatter
- * block wins with a top-level `deck:` key; otherwise the first line after the
- * block may carry `<overrideWord>:: Name`. A `deck:` key anywhere in the body
- * is plain text and never an override. The extraction layer can reuse this to
- * parse note headers in one place.
- */
+/** Deck the note's header targets; {@link parseNoteHeader} owns the parsing. */
 export function extractDeckOverride(content: string, overrideWord: string): string | undefined {
-  if (!content) return undefined;
-  const lines = content.split(/\r?\n/);
-
-  let bodyStart = 0;
-  if (lines[0]?.trim() === '---') {
-    const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
-    // An unclosed block is malformed, not frontmatter, so it carries no key.
-    if (closing !== -1) {
-      let deck: string | undefined;
-      for (const line of lines.slice(1, closing)) {
-        const match = line.match(FRONTMATTER_DECK_KEY);
-        const value = match ? stripYamlQuotes(match[1]) : '';
-        if (value) deck = value;
-      }
-      if (deck) return normalizeDeckTarget(deck);
-      bodyStart = closing + 1;
-    }
-  }
-
-  const word = overrideWord.trim();
-  if (!word) return undefined;
-  const firstLine = lines[bodyStart] ?? '';
-  const match = firstLine.match(new RegExp(`^${escapeRegex(word)}::\\s*(.+)$`, 'i'));
-  return normalizeDeckTarget(match?.[1]);
+  return parseNoteHeader(content, overrideWord).deckOverride;
 }
 
 function parseImagePath(text: string): string | null {

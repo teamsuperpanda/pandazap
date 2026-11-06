@@ -9,6 +9,7 @@ vi.mock('obsidian', () => ({
 }));
 
 import { AnkiConnector } from '../src/sync/AnkiConnector';
+import { legacySourceTag, sourceTag } from '../src/sync/sourceTags';
 import { getStoredMediaFilename } from '../src/sync/imageUtils';
 import {
   DEFAULT_SETTINGS,
@@ -236,20 +237,18 @@ describe('AnkiConnector', () => {
 
   it('counts analysed input cards, including cards that need no change', async () => {
     const connector = new AnkiConnector(settings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') {
-        return response(queryOf(request).includes(`tag:${sourceTag}`) ? [] : [11, 22]);
+        return response(queryOf(request).includes(`tag:${mineSourceTag}`) ? [] : [11, 22]);
       }
       if (request.action === 'notesInfo') {
         return response([
-          note(11, 'Same', 'A', [sourceTag]),
-          note(22, 'Edited', 'old', [sourceTag, 'pandazap-sync:stale']),
+          note(11, 'Same', 'A', [mineSourceTag]),
+          note(22, 'Edited', 'old', [mineSourceTag, 'pandazap-sync:stale']),
         ]);
       }
       throw new Error(`Unexpected action: ${request.action}`);
@@ -280,9 +279,7 @@ describe('AnkiConnector', () => {
 
   it('does not update a matching front owned by another source', async () => {
     const connector = new AnkiConnector(settings, app);
-    const otherTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'other.md'
-    );
+    const otherTag = sourceTag('other.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as { action: string };
@@ -305,12 +302,8 @@ describe('AnkiConnector', () => {
 
   it('uses one selected cache entry for its ID, fields, and tags', async () => {
     const connector = new AnkiConnector(settings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
-    const otherTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'other.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
+    const otherTag = sourceTag('other.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
@@ -321,7 +314,7 @@ describe('AnkiConnector', () => {
       if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([11, 22]);
       if (body.action === 'notesInfo') {
-        return response([note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [sourceTag])]);
+        return response([note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [mineSourceTag])]);
       }
       if (body.action === 'updateNoteFields') {
         expect(body.params?.note?.id).toBe(22);
@@ -340,19 +333,15 @@ describe('AnkiConnector', () => {
 
   it('recognizes and migrates a legacy truncated source tag', async () => {
     const connector = new AnkiConnector(settings, app);
-    const tags = connector as unknown as {
-      getSourceTag(path: string): string;
-      getLegacySourceTag(path: string): string;
-    };
     const path = `${'long-folder/'.repeat(10)}mine.md`;
-    const legacyTag = tags.getLegacySourceTag(path);
-    const sourceTag = tags.getSourceTag(path);
-    expect(sourceTag).toHaveLength(80);
-    expect(sourceTag).not.toBe(legacyTag);
+    const legacyTag = legacySourceTag(path);
+    const hashedTag = sourceTag(path);
+    expect(hashedTag).toHaveLength(80);
+    expect(hashedTag).not.toBe(legacyTag);
 
     const siblingPath = `${'long-folder/'.repeat(10)}other.md`;
-    expect(tags.getLegacySourceTag(siblingPath)).toBe(legacyTag);
-    expect(tags.getSourceTag(siblingPath)).not.toBe(sourceTag);
+    expect(legacySourceTag(siblingPath)).toBe(legacyTag);
+    expect(sourceTag(siblingPath)).not.toBe(hashedTag);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
@@ -365,7 +354,7 @@ describe('AnkiConnector', () => {
       if (body.action === 'notesInfo') return response([note(42, 'Q', 'new', [legacyTag])]);
       if (body.action === 'updateNoteTags') {
         expect(body.params).toMatchObject({ note: 42 });
-        expect(body.params?.tags).toContain(sourceTag);
+        expect(body.params?.tags).toContain(hashedTag);
         return response(null);
       }
       throw new Error(`Unexpected action: ${body.action}`);
@@ -379,14 +368,11 @@ describe('AnkiConnector', () => {
 
   it('does not claim a colliding legacy source tag in a shared overridden deck', async () => {
     const connector = new AnkiConnector(settings, app);
-    const tags = connector as unknown as {
-      getLegacySourceTag(path: string): string;
-    };
     const path = `${'long-folder/'.repeat(10)}mine.md`;
     const siblingPath = `${'long-folder/'.repeat(10)}other.md`;
     const overriddenDeck = path.replace(/\.md$/, '').replace(/\//g, '::');
-    const legacyTag = tags.getLegacySourceTag(path);
-    expect(tags.getLegacySourceTag(siblingPath)).toBe(legacyTag);
+    const legacyTag = legacySourceTag(path);
+    expect(legacySourceTag(siblingPath)).toBe(legacyTag);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
@@ -421,13 +407,9 @@ describe('AnkiConnector', () => {
 
   it('recognizes and migrates a lossless legacy tag in a shared overridden deck', async () => {
     const connector = new AnkiConnector(settings, app);
-    const tags = connector as unknown as {
-      getSourceTag(path: string): string;
-      getLegacySourceTag(path: string): string;
-    };
     const path = 'folder/mine.md';
-    const legacyTag = tags.getLegacySourceTag(path);
-    const sourceTag = tags.getSourceTag(path);
+    const legacyTag = legacySourceTag(path);
+    const hashedTag = sourceTag(path);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
@@ -437,12 +419,12 @@ describe('AnkiConnector', () => {
       if (body.action === 'version') return response(6);
       if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') {
-        return response(body.params?.query?.includes(`tag:${sourceTag}`) ? [] : [42]);
+        return response(body.params?.query?.includes(`tag:${hashedTag}`) ? [] : [42]);
       }
       if (body.action === 'notesInfo') return response([note(42, 'Q', 'A', [legacyTag])]);
       if (body.action === 'updateNoteTags') {
         expect(body.params).toMatchObject({ note: 42 });
-        expect(body.params?.tags).toContain(sourceTag);
+        expect(body.params?.tags).toContain(hashedTag);
         return response(null);
       }
       throw new Error(`Unexpected action: ${body.action}`);
@@ -475,9 +457,7 @@ describe('AnkiConnector', () => {
 
   it('adds a note for a second source that shares a question in the default deck', async () => {
     const connector = new AnkiConnector(deckSettings, app);
-    const otherTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'other.md'
-    );
+    const otherTag = sourceTag('other.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
@@ -499,9 +479,8 @@ describe('AnkiConnector', () => {
 
   it('deletes only the default-deck notes owned by the synced note', async () => {
     const connector = new AnkiConnector(deckSettings, app);
-    const tags = connector as unknown as { getSourceTag(path: string): string };
-    const mineTag = tags.getSourceTag('mine.md');
-    const otherTag = tags.getSourceTag('other.md');
+    const mineTag = sourceTag('mine.md');
+    const otherTag = sourceTag('other.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
@@ -536,19 +515,15 @@ describe('AnkiConnector', () => {
 
   it('finds an emptied note by exact source tag after its deck override was removed', async () => {
     const connector = new AnkiConnector(settings, app);
-    const tags = connector as unknown as {
-      getSourceTag(path: string): string;
-      getLegacySourceTag(path: string): string;
-    };
-    const sourceTag = tags.getSourceTag('mine.md');
-    expect(tags.getLegacySourceTag('mine.md')).not.toBe(sourceTag);
+    const hashedTag = sourceTag('mine.md');
+    expect(legacySourceTag('mine.md')).not.toBe(hashedTag);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') return response([11]);
       if (request.action === 'notesInfo') {
-        return response([note(11, 'Removed', 'answer', [sourceTag])]);
+        return response([note(11, 'Removed', 'answer', [hashedTag])]);
       }
       if (request.action === 'deleteNotes') return response(null);
       throw new Error(`Unexpected action: ${request.action}`);
@@ -558,7 +533,7 @@ describe('AnkiConnector', () => {
     const analysis = await connector.analyzeSyncOperation([], 'mine.md', 'Nothing left here');
     const queries = requests('findNotes').map(queryOf);
     // One exact-tag lookup: no deck filter and no shared legacy tag.
-    expect(queries).toEqual([`tag:panda-zap tag:${sourceTag}`]);
+    expect(queries).toEqual([`tag:panda-zap tag:${hashedTag}`]);
     expect(queries.join(' ')).not.toContain('deck:');
     expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([11]);
 
@@ -590,9 +565,7 @@ describe('AnkiConnector', () => {
 
   it('deletes exactly the immutable IDs supplied from confirmation', async () => {
     const connector = new AnkiConnector(settings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
     const confirmedIds = Object.freeze([11]);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
@@ -603,7 +576,7 @@ describe('AnkiConnector', () => {
       if (body.action === 'version') return response(6);
       if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([22]);
-      if (body.action === 'notesInfo') return response([note(22, 'Q', 'A', [sourceTag])]);
+      if (body.action === 'notesInfo') return response([note(22, 'Q', 'A', [mineSourceTag])]);
       if (body.action === 'deleteNotes') {
         expect(body.params?.notes).toEqual([11]);
         return response(null);
@@ -648,16 +621,14 @@ describe('AnkiConnector', () => {
 
   it('does not add after an update operation fails', async () => {
     const connector = new AnkiConnector(settings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
       if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([11]);
-      if (action === 'notesInfo') return response([note(11, 'Q', 'old', [sourceTag])]);
+      if (action === 'notesInfo') return response([note(11, 'Q', 'old', [mineSourceTag])]);
       if (action === 'updateNoteFields') return response(null, 'update failed');
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -713,9 +684,7 @@ describe('AnkiConnector', () => {
       metadataCache: { getFirstLinkpathDest: vi.fn(() => imageFile) },
     } as unknown as ConstructorParameters<typeof AnkiConnector>[1];
     const connector = new AnkiConnector(settings, imageApp);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
     const storedFilename = getStoredMediaFilename(imageApp, 'image.png', 'mine.md');
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
@@ -723,7 +692,7 @@ describe('AnkiConnector', () => {
       if (action === 'version') return response(6);
       if (action === 'findNotes') return response([11]);
       if (action === 'notesInfo') {
-        return response([note(11, 'Q', `A<br><img src="${storedFilename}">`, [sourceTag])]);
+        return response([note(11, 'Q', `A<br><img src="${storedFilename}">`, [mineSourceTag])]);
       }
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -738,9 +707,7 @@ describe('AnkiConnector', () => {
 
   it('reuses the analysis deck cache during sync', async () => {
     const connector = new AnkiConnector(deckSettings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
@@ -748,9 +715,9 @@ describe('AnkiConnector', () => {
         // The source-scoped deletion lookup sees nothing to delete here, so the
         // deck cache stays the only notesInfo lookup.
         const query = queryOf(request);
-        return response(query.includes(`tag:${sourceTag}`) ? [] : [11]);
+        return response(query.includes(`tag:${mineSourceTag}`) ? [] : [11]);
       }
-      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [sourceTag])]);
+      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [mineSourceTag])]);
       if (request.action === 'updateNoteTags') return response(null);
       throw new Error(`Unexpected action: ${request.action}`);
     });
@@ -835,14 +802,12 @@ describe('AnkiConnector', () => {
 
   it('re-queries Anki after the caller invalidates the cache following a sync run', async () => {
     const connector = new AnkiConnector(deckSettings, app);
-    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
-      'mine.md'
-    );
+    const mineSourceTag = sourceTag('mine.md');
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') return response([11]);
-      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [sourceTag])]);
+      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [mineSourceTag])]);
       throw new Error(`Unexpected action: ${request.action}`);
     });
 

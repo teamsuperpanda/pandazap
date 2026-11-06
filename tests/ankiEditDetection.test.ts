@@ -10,6 +10,7 @@ vi.mock('obsidian', () => ({
 
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import { DEFAULT_SETTINGS, type AnkiCard, type PandaZapSettings } from '../src/sync/types';
+import { sourceTag } from '../src/sync/sourceTags';
 import { SYNC_HASH_TAG_PREFIX } from '../src/constants';
 import { installFakeAnki, type FakeAnkiState, type FakeNote } from './fakeAnki';
 
@@ -35,10 +36,6 @@ function fingerprint(connector: AnkiConnector, front: string, back: string): str
     front,
     back
   );
-}
-
-function sourceTag(connector: AnkiConnector, notePath: string): string {
-  return (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(notePath);
 }
 
 /** Adds one card through the connector, then drops the deck cache like a sync does. */
@@ -110,14 +107,14 @@ describe('Anki edit detection', () => {
 
   it('updates a legacy note without a tag and starts detection from that push', async () => {
     const connector = new AnkiConnector(settings(), app);
-    const legacyTag = sourceTag(connector, NOTE_PATH);
+    const sourceTagValue = sourceTag(NOTE_PATH);
     const anki = installFakeAnki(requestUrl, {
       notes: [
         {
           noteId: 1,
           front: 'Q',
           back: 'A',
-          tags: ['panda-zap', legacyTag],
+          tags: ['panda-zap', sourceTagValue],
           cards: [10],
         },
       ],
