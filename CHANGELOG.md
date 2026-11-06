@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.2.0] - 2026-11-07
 - Pick the default deck and note type from dropdowns filled from your Anki collection instead of typing names by hand.
 - Set a deck per note with a `deck:` key in YAML frontmatter. It wins over a first-line `Deck::` override.
-- Sync the current note in one step from the command palette, or right-click one or more Markdown files and choose "Sync note(s) to Anki". Deletions are still confirmed first.
+- Sync the current note in one step from the command palette, or right-click one or more Markdown files and choose "Sync note to Anki" (a multi-selection shows "Sync N notes to Anki"). Deletions are still confirmed first.
 - Optionally sync notes that already exist in Anki shortly after you save them, without a dialog.
 - Cards stay attached to their note when you rename or move it: source tags and decks are migrated, and a pending migration is retried if Anki was unreachable at the time.
 - Run "Clean up orphaned media" to remove images uploaded by Panda Zap that no Anki note references any more. The list is verified before and after you confirm.
