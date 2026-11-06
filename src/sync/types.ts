@@ -40,6 +40,26 @@ export interface PendingTagMigration {
   toPath: string;
 }
 
+/** Why a queued rename migration has not been applied yet. */
+export type TagMigrationFailureReason = 'failed' | 'unidentified';
+
+/** A queued rename migration plus the reason it is still pending. */
+export interface PendingTagMigrationFailure {
+  migration: PendingTagMigration;
+  reason: TagMigrationFailureReason;
+}
+
+/** Outcome of moving the Anki notes of one renamed vault path. */
+export interface SourceTagMigrationResult {
+  /** Notes that were retagged, and moved when their deck changed. */
+  migrated: number;
+  /**
+   * Legacy-tagged notes matched the old tag but none could be proven to belong
+   * to the renamed note, so nothing was changed and the queue entry stays.
+   */
+  unidentified: boolean;
+}
+
 /** Shape of the Anki Connect JSON response */
 export interface AnkiConnectResponse {
   result: unknown;

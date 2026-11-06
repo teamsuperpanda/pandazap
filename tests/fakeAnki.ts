@@ -50,6 +50,13 @@ function noteText(note: FakeNote): string {
     .join('\n');
 }
 
+/** Decks a note's cards live in, for Anki's `deck:"..."` search. */
+function decksOf(state: FakeAnkiState, note: FakeNote): string[] {
+  return state.cards
+    .filter((card) => note.cards.includes(card.cardId))
+    .map((card) => card.deckName);
+}
+
 export function installFakeAnki(
   requestUrl: RequestUrlMock,
   initial: Partial<Pick<FakeAnkiState, 'notes' | 'cards' | 'media'>> = {}
@@ -76,17 +83,23 @@ export function installFakeAnki(
       case 'findNotes': {
         const query = String(request.params?.query ?? '');
         if (state.failFindNotes?.(query)) throw new Error('findNotes failed');
-        // Only tag and quoted text filters matter here; deck filters are
-        // ignored, exactly like a superset of the real result.
+        // Tag, deck and quoted text filters are honoured, so an over-broad
+        // legacy query fails the tests instead of passing unnoticed.
         const tags = query
           .split(/\s+/)
           .filter((token) => token.startsWith('tag:'))
           .map((token) => token.slice(4));
-        const quoted = (query.match(/"[^"]*"/g) ?? []).map((token) => token.slice(1, -1));
+        // The deck argument is quoted too, so remove it before reading the
+        // quoted full-text terms.
+        const deckMatch = query.match(/deck:"([^"]*)"/);
+        const deck = deckMatch?.[1];
+        const textQuery = deckMatch ? query.replace(deckMatch[0], '') : query;
+        const quoted = (textQuery.match(/"[^"]*"/g) ?? []).map((token) => token.slice(1, -1));
         return ok(
           state.notes
             .filter((note) => tags.every((tag) => note.tags.includes(tag)))
             .filter((note) => quoted.every((text) => noteText(note).includes(text)))
+            .filter((note) => !deck || decksOf(state, note).includes(deck))
             .map((note) => Number(note.noteId))
         );
       }

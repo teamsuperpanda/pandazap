@@ -13,6 +13,7 @@ import {
   SyncCardResult,
   SyncResult,
   SyncRunOptions,
+  SourceTagMigrationResult,
   describeConnection,
 } from './types';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../constants';
 import { buildAnkiConnectUrl } from '../settings';
 import { escapeRegex } from './markers';
+import { extractQACardsFromText } from './extractionUtils';
 import { stableHash } from './hashUtils';
 import { withTimeout } from './requestTimeout';
 import {
@@ -465,7 +467,7 @@ export class AnkiConnector {
 
     const allTags = [...new Set([...(cached.raw.tags ?? []), sourceTag])];
     await this.ankiConnectRequest('updateNoteTags', {
-      note: parseInt(noteId, 10),
+      note: Number(noteId),
       tags: allTags,
     });
     cached.raw.tags = allTags;
@@ -476,44 +478,71 @@ export class AnkiConnector {
    * so a renamed or moved note keeps the Anki notes it already has. Each note is
    * retagged in place with its other tags intact, and moved to the deck the new
    * path or its `Deck::` override targets when that differs from the deck the
-   * old path or override targeted. Returns how many notes carried an old tag.
+   * old path or override targeted.
+   *
+   * The hashed tag is unique per path, so it is trusted as is. The legacy tag is
+   * truncated to 80 characters, so deep siblings can share it: those candidates
+   * must be deck-scoped to the old path's deck and prove ownership by matching a
+   * card Front of the renamed note, or nothing is migrated.
    */
-  async migrateSourceTag(fromPath: string, toPath: string, toContent?: string): Promise<number> {
+  async migrateSourceTag(
+    fromPath: string,
+    toPath: string,
+    toContent?: string
+  ): Promise<SourceTagMigrationResult> {
     const toTag = this.getSourceTag(toPath);
-    // Older versions only wrote the truncated legacy tag, so both are searched.
-    // The legacy tag is only usable when it unambiguously names one path, which
-    // is the same rule a normal sync applies.
-    const oldTags = this.getEligibleSourceTags(fromPath, this.getDeckName(fromPath));
-    if (oldTags.length === 1 && oldTags[0] === toTag) return 0;
+    const hashedOldTag = this.getSourceTag(fromPath);
+    if (hashedOldTag === toTag) return { migrated: 0, unidentified: false };
+    const legacyOldTag = this.getLegacySourceTag(fromPath);
+    // A rename does not edit the note, so the renamed file's content is also the
+    // old content and its `Deck::` override applies to the old path.
+    const oldDeck = this.getDeckName(fromPath, toContent);
+    const newDeck = this.getDeckName(toPath, toContent);
+    // Same rule a normal sync uses before trusting a truncated legacy tag.
+    const searchLegacy = this.getEligibleSourceTags(fromPath, this.getDeckName(fromPath)).includes(
+      legacyOldTag
+    );
 
-    const noteIds = new Set<string>();
-    for (const oldTag of oldTags) {
-      const found = (await this.ankiConnectRequest('findNotes', {
-        query: `tag:${PLUGIN_TAG} tag:${oldTag}`,
-      })) as Array<string | number>;
-      if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
-      for (const id of found) noteIds.add(String(id));
-    }
-    // No note carries an old tag, so there is nothing to migrate and the queue
-    // entry is finished.
-    if (noteIds.size === 0) return 0;
+    const ownedIds = new Set(await this.findPluginNotes(`tag:${PLUGIN_TAG} tag:${hashedOldTag}`));
+    // The legacy tag can name several deep siblings, so only the deck the old
+    // path targets can hold this note's own cards.
+    const legacyIds = searchLegacy
+      ? await this.findPluginNotes(`deck:"${oldDeck}" tag:${PLUGIN_TAG} tag:${legacyOldTag}`)
+      : [];
+
+    const allIds = [...new Set([...ownedIds, ...legacyIds])];
+    if (allIds.length === 0) return { migrated: 0, unidentified: false };
 
     const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-      notes: [...noteIds],
+      notes: allIds,
     })) as AnkiNoteInfo[];
     if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
 
-    // The old note's own content cannot be read once it has been renamed, so the
-    // old deck is derived from the old path alone. A deck override is therefore
-    // only seen in the new deck; the old override deck was already the target
-    // for every note a sync wrote, so nothing there needs moving.
-    const oldDeck = this.getDeckName(fromPath);
-    const newDeck = this.getDeckName(toPath, toContent);
+    const legacyCandidates = notesInfo.filter(
+      (note) => legacyIds.includes(ankiNoteId(note)) && note.tags?.includes(legacyOldTag)
+    );
+    const questions = this.noteQuestionKeys(toContent);
+    const matchedLegacy = legacyCandidates.filter((note) =>
+      questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
+    );
+    // A question carried by two legacy candidates cannot decide which note is
+    // the renamed one's, so migrating either could hijack a sibling.
+    const ambiguous = this.hasAmbiguousLegacyCandidate(legacyCandidates, ownedIds, questions);
+    if (legacyCandidates.length > 0 && (matchedLegacy.length === 0 || ambiguous)) {
+      return { migrated: 0, unidentified: true };
+    }
+
+    const matchedIds = new Set(matchedLegacy.map(ankiNoteId));
+    const migrationTargets = notesInfo.filter(
+      (note) => ownedIds.has(ankiNoteId(note)) || matchedIds.has(ankiNoteId(note))
+    );
+    if (migrationTargets.length === 0) return { migrated: 0, unidentified: false };
+
     const defaultDeckMode = !this.settings.useNoteBased && !this.getDeckOverride(toContent);
     const moveDeck = !defaultDeckMode && oldDeck !== newDeck;
-    const cardsByNote = await this.fetchCardsByNote(notesInfo);
+    const cardsByNote = await this.fetchCardsByNote(migrationTargets);
 
-    for (const note of notesInfo) {
+    for (const note of migrationTargets) {
       const noteId = ankiNoteId(note);
       if (!noteId) continue;
 
@@ -534,17 +563,53 @@ export class AnkiConnector {
         }
       }
 
-      const tags = (note.tags ?? []).filter((tag) => !oldTags.includes(tag));
+      const tags = (note.tags ?? []).filter((tag) => tag !== hashedOldTag && tag !== legacyOldTag);
       if (!tags.includes(toTag)) tags.push(toTag);
       await this.ankiConnectRequest('updateNoteTags', {
-        note: parseInt(noteId, 10),
+        note: Number(noteId),
         tags,
       });
     }
 
     // Tags and decks changed under the cached notes.
     this.invalidateCache();
-    return notesInfo.length;
+    return { migrated: migrationTargets.length, unidentified: false };
+  }
+
+  /** Note IDs matching one AnkiConnect query, as strings. */
+  private async findPluginNotes(query: string): Promise<string[]> {
+    const found = (await this.ankiConnectRequest('findNotes', { query })) as Array<string | number>;
+    if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
+    return found.map(String);
+  }
+
+  /** Normalised Front fields of the cards a renamed note contains. */
+  private noteQuestionKeys(toContent?: string): Set<string> {
+    if (!toContent) return new Set();
+    return new Set(
+      extractQACardsFromText(toContent, this.settings).map((card) =>
+        normalizeHtmlField(card.question || '')
+      )
+    );
+  }
+
+  /**
+   * True when a question of the renamed note appears on more than one legacy
+   * candidate that has no hashed tag, which makes ownership undecidable.
+   */
+  private hasAmbiguousLegacyCandidate(
+    legacyCandidates: readonly AnkiNoteInfo[],
+    ownedIds: ReadonlySet<string>,
+    questions: ReadonlySet<string>
+  ): boolean {
+    const counts = new Map<string, number>();
+    for (const note of legacyCandidates) {
+      if (ownedIds.has(ankiNoteId(note))) continue;
+      const question = normalizeHtmlField(note.fields?.Front?.value ?? '');
+      if (!questions.has(question)) continue;
+      counts.set(question, (counts.get(question) ?? 0) + 1);
+    }
+    return [...counts.values()].some((count) => count > 1);
   }
 
   /** Card details per note, so a source tag migration can move decks. */

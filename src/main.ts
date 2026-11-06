@@ -16,7 +16,9 @@ import {
   SyncResult,
   SyncRunOptions,
   AnkiConnectionState,
-  PendingTagMigration,
+  PendingTagMigrationFailure,
+  SourceTagMigrationResult,
+  TagMigrationFailureReason,
   describeConnection,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
@@ -29,6 +31,7 @@ export default class PandaZapPlugin extends Plugin {
   private cardExtractor: CardExtractor;
   private settingsSaveQueue: Promise<void> = Promise.resolve();
   private tagMigrationQueue: Promise<void> = Promise.resolve();
+  private mediaCleanupActive = false;
   private activeSyncModal: SyncModal | null = null;
 
   async onload() {
@@ -87,7 +90,8 @@ export default class PandaZapPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (!(file instanceof TFile) || file.extension !== 'md' || file.path === oldPath) return;
-        return this.handleNoteRename(oldPath, file.path);
+        // The handler observes its own failures; this avoids a floating promise.
+        void this.handleNoteRename(oldPath, file.path);
       })
     );
 
@@ -121,6 +125,11 @@ export default class PandaZapPlugin extends Plugin {
    * the open dialog instead of starting a second, concurrent run.
    */
   showSyncModal(modal: SyncModal): void {
+    if (this.mediaCleanupActive) {
+      // A sync during cleanup can re-attach a file that was about to be deleted.
+      new Notice('Wait for the media cleanup to finish');
+      return;
+    }
     if (this.activeSyncModal) {
       this.reportSyncDialogOpen();
       return;
@@ -215,13 +224,13 @@ export default class PandaZapPlugin extends Plugin {
    * Retags the Anki notes of renamed files that are still queued. Entries are
    * processed independently, so one poisoned rename cannot hold up the rest;
    * a chained rename whose source tag was never written is kept for a later
-   * run. Returns the migrations that are still pending, so a caller can block
-   * the syncs that would duplicate them.
+   * run. Returns the migrations that are still pending with why, so a caller can
+   * block the syncs that would duplicate them.
    */
-  flushPendingTagMigrations(): Promise<PendingTagMigration[]> {
+  flushPendingTagMigrations(): Promise<PendingTagMigrationFailure[]> {
     // Renames and sync entry points can ask at the same time, so runs are
     // serialised and each one sees the queue the previous run left behind.
-    const flush: Promise<PendingTagMigration[]> = this.tagMigrationQueue.then(() =>
+    const flush: Promise<PendingTagMigrationFailure[]> = this.tagMigrationQueue.then(() =>
       this.runPendingTagMigrations()
     );
     this.tagMigrationQueue = flush.then(
@@ -231,10 +240,13 @@ export default class PandaZapPlugin extends Plugin {
     return flush;
   }
 
-  private async runPendingTagMigrations(): Promise<PendingTagMigration[]> {
+  private async runPendingTagMigrations(): Promise<PendingTagMigrationFailure[]> {
     const pending = [...this.settings.pendingTagMigrations];
-    const failed: PendingTagMigration[] = [];
+    const failed: PendingTagMigrationFailure[] = [];
     if (pending.length === 0) return failed;
+    // The queue entry is on disk before the first Anki mutation, so a crash
+    // mid-migration cannot lose a rename.
+    await this.settingsSaveQueue;
     this.ankiConnector.updateSettings(this.settings);
 
     // Paths whose final source tag is not known yet: a failed rename A -> B
@@ -244,7 +256,7 @@ export default class PandaZapPlugin extends Plugin {
 
     for (const migration of pending) {
       if (unsettled.has(migration.fromPath)) {
-        failed.push(migration);
+        failed.push({ migration, reason: 'failed' });
         unsettled.add(migration.toPath);
         continue;
       }
@@ -259,13 +271,26 @@ export default class PandaZapPlugin extends Plugin {
         }
       }
 
+      let result: SourceTagMigrationResult;
       try {
-        await this.ankiConnector.migrateSourceTag(migration.fromPath, migration.toPath, content);
+        result = await this.ankiConnector.migrateSourceTag(
+          migration.fromPath,
+          migration.toPath,
+          content
+        );
       } catch (error: unknown) {
         // The old tag is still on the notes, so syncing them now would duplicate
         // them. Keep the entry and try the unrelated entries after it.
         console.warn('PandaZap: source tag migration failed', migration.toPath, error);
-        failed.push(migration);
+        failed.push({ migration, reason: 'failed' });
+        unsettled.add(migration.toPath);
+        continue;
+      }
+
+      if (result.unidentified) {
+        // Legacy-tagged notes matched, but none could be proven to belong to
+        // this note, so nothing was touched and the entry needs the user.
+        failed.push({ migration, reason: 'unidentified' });
         unsettled.add(migration.toPath);
         continue;
       }
@@ -285,10 +310,12 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   /**
-   * Queues a renamed note, persists the queue before touching Anki, then
-   * migrates at once so a reachable Anki is updated without waiting for a sync.
+   * Queues a renamed note, starts persisting the queue, then migrates at once
+   * so a reachable Anki is updated without waiting for a sync. The returned
+   * promise is only used by callers that want to observe the flush; the vault
+   * event handler discards it with `void`.
    */
-  private async handleNoteRename(fromPath: string, toPath: string): Promise<void> {
+  private handleNoteRename(fromPath: string, toPath: string): Promise<void> {
     const queued = this.settings.pendingTagMigrations.some(
       (entry) => entry.fromPath === fromPath && entry.toPath === toPath
     );
@@ -297,13 +324,21 @@ export default class PandaZapPlugin extends Plugin {
         ...this.settings.pendingTagMigrations,
         { fromPath, toPath },
       ];
-      try {
-        await this.saveSettings();
-      } catch (error: unknown) {
+      void this.saveSettings().catch((error: unknown) => {
         console.warn('PandaZap: could not persist tag migration queue', error);
-      }
+      });
     }
-    await this.flushPendingTagMigrations();
+
+    // A rename whose legacy notes cannot be identified is reported here, while
+    // the user is still looking at the note they just renamed.
+    const flush = this.flushPendingTagMigrations();
+    void flush.then((failed) => {
+      const unresolved = failed.some(
+        (failure) => failure.reason === 'unidentified' && failure.migration.toPath === toPath
+      );
+      if (unresolved) new Notice(describeTagMigrationFailure(toPath, 'unidentified'));
+    });
+    return flush.then(() => undefined);
   }
 
   /**
@@ -316,25 +351,38 @@ export default class PandaZapPlugin extends Plugin {
   ): Promise<void> {
     const failed = await this.flushPendingTagMigrations();
     const targets = new Set(targetPaths.filter((path): path is string => Boolean(path)));
-    const blocking = failed.find((migration) => targets.has(migration.toPath));
+    const blocking = failed.find((failure) => targets.has(failure.migration.toPath));
     if (!blocking) return;
 
-    const message = describeTagMigrationFailure(blocking.toPath);
+    const message = describeTagMigrationFailure(blocking.migration.toPath, blocking.reason);
     new Notice(message);
     throw new Error(message);
   }
 
   /**
    * Deletes media the plugin uploaded that no Anki note references any more.
-   * Both listings must succeed before anything is deleted, and every candidate
-   * is verified against all notes, so media still used by an untagged note
-   * survives.
+   * Both listings must succeed before anything is deleted, and candidates are
+   * verified against all notes twice: once before the dialog and once right
+   * before deletion, so a note that gains the file in between keeps it.
    */
   async cleanUpOrphanedMedia(): Promise<void> {
     if (this.activeSyncModal) {
       new Notice('Close the sync dialog before cleaning up media');
       return;
     }
+    if (this.mediaCleanupActive) {
+      new Notice('Media cleanup is already running');
+      return;
+    }
+    this.mediaCleanupActive = true;
+    try {
+      await this.runMediaCleanup();
+    } finally {
+      this.mediaCleanupActive = false;
+    }
+  }
+
+  private async runMediaCleanup(): Promise<void> {
     this.ankiConnector.updateSettings(this.settings);
 
     let mediaFiles: string[];
@@ -373,8 +421,23 @@ export default class PandaZapPlugin extends Plugin {
     }).confirm();
     if (!confirmed) return;
 
+    // A sync or a note edit during the dialog can reference a candidate, so the
+    // verified set from before the dialog is not good enough to delete.
+    let stillUnreferenced: string[];
     try {
-      const deleted = await this.ankiConnector.removeMediaFiles(orphans);
+      stillUnreferenced = await this.ankiConnector.filterUnreferencedMedia(orphans);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Could not verify Anki media: ${message}`);
+      return;
+    }
+    if (stillUnreferenced.length === 0) {
+      new Notice('No orphaned Panda Zap media to delete');
+      return;
+    }
+
+    try {
+      const deleted = await this.ankiConnector.removeMediaFiles(stillUnreferenced);
       new Notice(`Deleted ${deleted} orphaned Panda Zap media ${plural(deleted, 'file')}`);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -577,7 +640,10 @@ export default class PandaZapPlugin extends Plugin {
 /** How many orphan names the confirmation lists before summarising the rest. */
 const MEDIA_PREVIEW_LIMIT = 5;
 
-function describeTagMigrationFailure(notePath: string): string {
+function describeTagMigrationFailure(notePath: string, reason: TagMigrationFailureReason): string {
+  if (reason === 'unidentified') {
+    return `Could not identify the old Anki cards of renamed note "${notePath}". Check that its card questions are unchanged, then retry the sync.`;
+  }
   return `Could not update Anki for renamed note "${notePath}". Connect to Anki and retry the sync.`;
 }
 

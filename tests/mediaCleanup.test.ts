@@ -33,6 +33,7 @@ vi.mock('../src/dialogs/ConfirmModal', () => ({
 }));
 
 import PandaZapPlugin from '../src/main';
+import { SyncModal } from '../src/dialogs/SyncModal';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import { DEFAULT_SETTINGS, type PandaZapSettings } from '../src/sync/types';
 import { installFakeAnki, type FakeAnkiState } from './fakeAnki';
@@ -238,5 +239,50 @@ describe('orphaned media cleanup', () => {
     expect(requestUrl).not.toHaveBeenCalled();
     expect(deleteRequests(anki)).toEqual([]);
     expect(notices).toContain('Close the sync dialog before cleaning up media');
+  });
+
+  it('skips a candidate that becomes referenced while the dialog is open', async () => {
+    anki.media = ['pandazap_old.png'];
+    const plugin = createPlugin(createConnector());
+    confirm.mockImplementation(async () => {
+      // Another note gains the file between the first check and deletion.
+      anki.notes.push({
+        noteId: '9',
+        front: 'Q',
+        back: '<img src="pandazap_old.png">',
+        tags: [],
+        cards: [],
+      });
+      return true;
+    });
+
+    await plugin.cleanUpOrphanedMedia();
+
+    expect(deleteRequests(anki)).toEqual([]);
+    expect(anki.media).toEqual(['pandazap_old.png']);
+    expect(notices).toContain('No orphaned Panda Zap media to delete');
+  });
+
+  it('cannot start a sync while the cleanup dialog is open', async () => {
+    anki.media = ['pandazap_old.png'];
+    const plugin = createPlugin(createConnector());
+    let release!: (confirmed: boolean) => void;
+    confirm.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        })
+    );
+
+    const cleanup = plugin.cleanUpOrphanedMedia();
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+
+    const modal = { open: vi.fn() } as unknown as SyncModal;
+    plugin.showSyncModal(modal);
+    expect(modal.open).not.toHaveBeenCalled();
+    expect(notices).toContain('Wait for the media cleanup to finish');
+
+    release(false);
+    await cleanup;
   });
 });

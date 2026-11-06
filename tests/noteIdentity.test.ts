@@ -118,16 +118,20 @@ async function loadPlugin(harness: Harness): Promise<PandaZapPlugin> {
   return plugin;
 }
 
-function renameTo(
+async function renameTo(
   harness: Harness,
+  plugin: PandaZapPlugin,
   fromPath: string,
   toPath: string,
   content = ''
-): Promise<unknown[]> {
+): Promise<void> {
   harness.files.delete(fromPath);
   harness.files.set(toPath, { content, file: newFile(toPath) });
   const file = harness.files.get(toPath)?.file;
-  return Promise.all(harness.renameHandlers.map((handler) => handler(file, fromPath)));
+  for (const handler of harness.renameHandlers) handler(file, fromPath);
+  // The event handler starts its own flush; chaining a second flush behind it
+  // waits for the first one to settle.
+  await plugin.flushPendingTagMigrations();
 }
 
 function sourceTagOf(plugin: PandaZapPlugin, path: string): string {
@@ -145,9 +149,15 @@ function legacyTagOf(plugin: PandaZapPlugin, path: string): string {
   ).getLegacySourceTag(path);
 }
 
-function addAnkiNote(state: FakeAnkiState, noteId: string, tags: string[], deckName: string): void {
+function addAnkiNote(
+  state: FakeAnkiState,
+  noteId: string,
+  tags: string[],
+  deckName: string,
+  front = 'Q'
+): void {
   const cardId = Number(noteId);
-  state.notes.push({ noteId, front: 'Q', back: 'A', tags, cards: [cardId] });
+  state.notes.push({ noteId, front, back: 'A', tags, cards: [cardId] });
   state.cards.push({ cardId, note: cardId, deckName });
 }
 
@@ -172,7 +182,7 @@ describe('note rename migration', () => {
     const newTag = sourceTagOf(plugin, 'folder/renamed.md');
     addAnkiNote(anki, '11', ['panda-zap', 'obsidian', oldTag, 'keep-me'], 'Default');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
     expect(anki.notes[0].tags).not.toContain(oldTag);
     expect(anki.notes[0].tags).toContain(newTag);
@@ -191,7 +201,7 @@ describe('note rename migration', () => {
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
     addAnkiNote(anki, '11', ['panda-zap', oldTag], 'folder::note');
 
-    await renameTo(harness, 'folder/note.md', 'other/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'other/renamed.md', 'Q: Q\nA: A');
 
     const deckMove = anki.requests.find((request) => request.action === 'changeDeck');
     expect(deckMove?.params).toEqual({ cards: [11], deck: 'other::renamed' });
@@ -205,7 +215,7 @@ describe('note rename migration', () => {
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
     addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Default');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
     expect(anki.requests.map((request) => request.action)).not.toContain('changeDeck');
   });
@@ -214,7 +224,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
     expect(plugin.settings.pendingTagMigrations).toEqual([]);
     expect(anki.requests.map((request) => request.action)).not.toContain('updateNoteTags');
@@ -228,7 +238,7 @@ describe('note rename migration', () => {
     addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Default');
     anki.failActions.add('findNotes');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
     expect(plugin.settings.pendingTagMigrations).toEqual([
       { fromPath: 'folder/note.md', toPath: 'folder/renamed.md' },
@@ -295,8 +305,8 @@ describe('note rename migration', () => {
     const firstTag = sourceTagOf(plugin, 'folder/note.md');
     addAnkiNote(anki, '11', ['panda-zap', firstTag], 'Default');
 
-    await renameTo(harness, 'folder/note.md', 'folder/step.md', 'Q: Q\nA: A');
-    await renameTo(harness, 'folder/step.md', 'folder/final.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/step.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/step.md', 'folder/final.md', 'Q: Q\nA: A');
 
     const tags = anki.notes[0].tags;
     expect(tags).toContain(sourceTagOf(plugin, 'folder/final.md'));
@@ -310,7 +320,7 @@ describe('note rename migration', () => {
     const plugin = await loadPlugin(harness);
     addAnkiNote(anki, '11', ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Default');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
     const tagsAfterFirstRun = [...anki.notes[0].tags];
     const writesAfterFirstRun = anki.requests.filter(
       (request) => request.action === 'updateNoteTags'
@@ -330,7 +340,13 @@ describe('note rename migration', () => {
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
     addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Spanish');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Deck::Spanish\n\nQ: Q\nA: A');
+    await renameTo(
+      harness,
+      plugin,
+      'folder/note.md',
+      'folder/renamed.md',
+      'Deck::Spanish\n\nQ: Q\nA: A'
+    );
 
     expect(anki.notes[0].tags).toContain(sourceTagOf(plugin, 'folder/renamed.md'));
     expect(anki.requests.map((request) => request.action)).not.toContain('changeDeck');
@@ -342,7 +358,7 @@ describe('note rename migration', () => {
     const plugin = await loadPlugin(harness);
     addAnkiNote(anki, '11', ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Custom');
 
-    await renameTo(harness, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
     expect(anki.requests.map((request) => request.action)).not.toContain('changeDeck');
     expect(anki.cards[0].deckName).toBe('Custom');
@@ -353,13 +369,67 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const legacyOldTag = legacyTagOf(plugin, 'note.md');
-    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], 'Default');
+    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], 'note');
 
-    await renameTo(harness, 'note.md', 'renamed.md', 'Q: Q\nA: A');
+    await renameTo(harness, plugin, 'note.md', 'renamed.md', 'Q: Q\nA: A');
 
     expect(anki.notes[0].tags).not.toContain(legacyOldTag);
     expect(anki.notes[0].tags).toContain(sourceTagOf(plugin, 'renamed.md'));
     expect(plugin.settings.pendingTagMigrations).toEqual([]);
+    const write = anki.requests.find((request) => request.action === 'updateNoteTags');
+    expect(write?.params?.note).toBe(11);
+    expect(typeof write?.params?.note).toBe('number');
+  });
+
+  it('only retags the renamed note when deep siblings share a legacy tag', async () => {
+    const deepFolder = `deep/${'a'.repeat(80)}`;
+    const xPath = `${deepFolder}/x.md`;
+    const yPath = `${deepFolder}/y.md`;
+    const xContent = 'Deck::Shared\n\nQ: X question\nA: X answer';
+    const yContent = 'Deck::Shared\n\nQ: Y question\nA: Y answer';
+    const harness = createHarness({ [xPath]: xContent, [yPath]: yContent });
+    const plugin = await loadPlugin(harness);
+    const legacyOldTag = legacyTagOf(plugin, xPath);
+    // Both paths are truncated to the same 80 character legacy tag.
+    expect(legacyTagOf(plugin, yPath)).toBe(legacyOldTag);
+    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], 'Shared', 'X question');
+    addAnkiNote(anki, '12', ['panda-zap', legacyOldTag], 'Shared', 'Y question');
+
+    await renameTo(harness, plugin, xPath, 'z.md', xContent);
+
+    const ownNote = anki.notes.find((note) => note.noteId === '11');
+    const siblingNote = anki.notes.find((note) => note.noteId === '12');
+    expect(ownNote?.tags).toContain(sourceTagOf(plugin, 'z.md'));
+    expect(ownNote?.tags).not.toContain(legacyOldTag);
+    expect(siblingNote?.tags).toEqual(['panda-zap', legacyOldTag]);
+    expect(plugin.settings.pendingTagMigrations).toEqual([]);
+
+    // The emptied-note deletion query has no deck clause, so a hijacked sibling
+    // would show up as a stale card of the renamed note.
+    const analysis = await connectorOf(plugin).analyzeSyncOperation([], 'z.md', '');
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+  });
+
+  it('keeps the rename queued when no legacy candidate matches its cards', async () => {
+    const deepFolder = `deep/${'b'.repeat(80)}`;
+    const xPath = `${deepFolder}/x.md`;
+    const content = 'Q: New question\nA: New answer';
+    const harness = createHarness({ [xPath]: content });
+    const plugin = await loadPlugin(harness);
+    const legacyOldTag = legacyTagOf(plugin, xPath);
+    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], `${deepFolder}::x`, 'Old question');
+
+    await renameTo(harness, plugin, xPath, 'z.md', content);
+
+    expect(plugin.settings.pendingTagMigrations).toEqual([{ fromPath: xPath, toPath: 'z.md' }]);
+    expect(anki.notes[0].tags).toEqual(['panda-zap', legacyOldTag]);
+    expect(notices).toContain(
+      'Could not identify the old Anki cards of renamed note "z.md". Check that its card questions are unchanged, then retry the sync.'
+    );
+
+    await expect(
+      plugin.syncCardsToAnki(false, false, createSyncContext([], 'z.md', content))
+    ).rejects.toThrow('Could not identify the old Anki cards');
   });
 
   it('keeps draining other entries and blocks only the affected sync', async () => {
@@ -377,7 +447,9 @@ describe('note rename migration', () => {
 
     const failed = await plugin.flushPendingTagMigrations();
 
-    expect(failed).toEqual([{ fromPath: 'a/old.md', toPath: 'a/new.md' }]);
+    expect(failed).toEqual([
+      { migration: { fromPath: 'a/old.md', toPath: 'a/new.md' }, reason: 'failed' },
+    ]);
     expect(anki.notes[0].tags).toContain(tagA);
     expect(anki.notes[1].tags).toContain(sourceTagOf(plugin, 'b/new.md'));
     expect(plugin.settings.pendingTagMigrations).toEqual([
@@ -408,8 +480,8 @@ describe('note rename migration', () => {
     const failed = await plugin.flushPendingTagMigrations();
 
     expect(failed).toEqual([
-      { fromPath: 'a/start.md', toPath: 'a/step.md' },
-      { fromPath: 'a/step.md', toPath: 'a/final.md' },
+      { migration: { fromPath: 'a/start.md', toPath: 'a/step.md' }, reason: 'failed' },
+      { migration: { fromPath: 'a/step.md', toPath: 'a/final.md' }, reason: 'failed' },
     ]);
     expect(plugin.settings.pendingTagMigrations).toHaveLength(2);
     expect(anki.notes[0].tags).toContain(tagA);
