@@ -40,8 +40,8 @@ describe('styles.css', () => {
     }
   });
 
-  it('has no fixed modal min-width that overflows narrow windows', () => {
-    expect(css).not.toMatch(/min-width:\s*(520|600)px/);
+  it('has no modal min-width that overflows narrow windows', () => {
+    expect(css).not.toMatch(/\.panda-zap-(sync|preview)-modal\s*\{[^}]*min-width/);
   });
 
   it('scopes every selector to a panda-zap class', () => {

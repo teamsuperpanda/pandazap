@@ -1,7 +1,6 @@
 .panda-zap-sync-modal {
   width: 100%;
   max-width: 760px;
-  min-width: min(100%, 400px);
 }
 .panda-zap-header { position: relative; text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--background-modifier-border); }
 .panda-zap-header h2 { margin: 0; color: var(--text-normal); font-size: 1.5em; }
@@ -97,7 +96,6 @@
 .panda-zap-preview-modal {
   width: 100%;
   max-width: 820px;
-  min-width: min(100%, 480px);
 }
 .panda-zap-preview-header { text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--background-modifier-border); }
 .panda-zap-preview-header h2 { margin: 0; color: var(--text-normal); font-size: 1.5em; }
