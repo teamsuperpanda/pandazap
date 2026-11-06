@@ -34,6 +34,7 @@
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "eslint-plugin-obsidianmd": "^0.5.0",
+    "jsdom": "^29.1.1",
     "obsidian": "^1.14.4",
     "prettier": "^3.9.10",
     "tslib": "^2.9.1",
