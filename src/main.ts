@@ -235,13 +235,19 @@ export default class PandaZapPlugin extends Plugin {
 
     try {
       for (const [notePath, context] of bContext.contexts) {
+        // A note with no confirmed deletions must receive an explicit empty list.
+        // Passing undefined would let the connector re-analyse and delete notes
+        // the user never saw in the confirmation.
+        const confirmedDeletionIds = confirmedDeletionIdsByNote
+          ? (confirmedDeletionIdsByNote.get(notePath) ?? [])
+          : undefined;
         const noteResult = await this.ankiConnector.syncCards(
           context.cards,
           preview,
           notePath,
           context.noteContent,
           deleteConfirmed,
-          confirmedDeletionIdsByNote?.get(notePath),
+          confirmedDeletionIds,
           true
         );
         result.cards.push(...noteResult.cards);

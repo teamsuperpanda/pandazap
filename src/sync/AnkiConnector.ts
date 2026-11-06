@@ -154,8 +154,8 @@ export class AnkiConnector {
       }
     }
 
-    // Deletion is scoped by deck, plugin tag and source tag, so it applies to
-    // the shared default deck as well as to note-based decks.
+    // Deletion is scoped by the plugin tag and the note's source tag, so it
+    // applies to the shared default deck as well as to note-based decks.
     if (notePath) {
       const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
@@ -167,10 +167,20 @@ export class AnkiConnector {
         return existingNoteIds;
       };
 
-      const sourceTags = this.getEligibleSourceTags(notePath, deckName, noteContent);
+      const sourceTags =
+        cards.length === 0
+          ? [this.getSourceTag(notePath)]
+          : this.getEligibleSourceTags(notePath, deckName, noteContent);
       const noteIds = new Set<string>();
       for (const sourceTag of sourceTags) {
-        const query = `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
+        // An emptied note may have lost its `Deck::` line or had the default deck
+        // changed, so a deck filter would hide the notes it still owns. Its exact
+        // source tag is unique per note and safe to match across decks; the
+        // legacy tag can be shared, so it stays out of this path.
+        const query =
+          cards.length === 0
+            ? `tag:${PLUGIN_TAG} tag:${sourceTag}`
+            : `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
         for (const noteId of await findNotes(query)) noteIds.add(noteId);
       }
 
@@ -233,7 +243,7 @@ export class AnkiConnector {
 
     const results: SyncCardResult[] = [];
     const deckName = this.getDeckName(notePath, noteContent);
-    if (this.settings.useNoteBased && notePath && !preview) {
+    if (this.settings.useNoteBased && notePath && !preview && cards.length > 0) {
       try {
         await this.ankiConnectRequest('createDeck', {
           deck: deckName,

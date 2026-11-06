@@ -72,6 +72,12 @@ function normalizeMarkerWord(value: unknown, fallback: string): string {
   return word && validateMarkerWord(word) === null ? word : fallback;
 }
 
+/** Deck names go into a `deck:"..."` query, so they cannot contain line breaks. */
+function normalizeDeckName(value: unknown, fallback: string): string {
+  const name = trimmedString(value);
+  return name && validateDeckName(name) === null ? name : fallback;
+}
+
 /**
  * The deck override word is matched before `::`, so it is plain text: it may
  * contain a colon but not a line break, and it must not be empty.
@@ -94,7 +100,7 @@ export function normalizeSettings(raw: unknown): PandaZapSettings {
   return {
     ankiConnectUrl: normalizeAnkiConnectUrl(source.ankiConnectUrl),
     ankiConnectPort: normalizeAnkiConnectPort(source.ankiConnectPort),
-    defaultDeck: normalizeText(source.defaultDeck, DEFAULT_SETTINGS.defaultDeck),
+    defaultDeck: normalizeDeckName(source.defaultDeck, DEFAULT_SETTINGS.defaultDeck),
     deckOverrideWord: normalizeDeckOverrideWord(
       source.deckOverrideWord,
       DEFAULT_SETTINGS.deckOverrideWord

@@ -22,7 +22,7 @@ Keep Anki running and reachable at this address while syncing.
 
 - **Default Deck**
   - The Anki deck used for all cards when note-based deck organization is off, and the fallback when no `Deck::` override is present (default: `Default`).
-  - Set it in the plugin settings. An empty value is rejected in the settings UI and falls back to `Default` when read from a corrupt `data.json`.
+  - Set it in the plugin settings. An empty or multi-line value is rejected in the settings UI, and falls back to `Default` when read from a corrupt `data.json`.
 
 - **Use Note-Based Decks**
   - When enabled, Panda Zap will create or map Anki decks based on the note path in your vault (folder::NoteName). If disabled the plugin uses the configured Default Deck for all created notes.
