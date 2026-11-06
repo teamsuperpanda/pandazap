@@ -339,7 +339,7 @@ describe('sync current note command', () => {
         totalCards: 1,
       }),
       syncCards: vi.fn().mockResolvedValue({
-        cards: [{ card: { question: 'Buffered', answer: 'Value', line: 1 }, status: 'updated' }],
+        cards: [{ card: { question: 'Buffered', answer: 'Value' }, status: 'updated' }],
       }),
     });
     useConnector(harness.plugin, connector);
@@ -349,8 +349,7 @@ describe('sync current note command', () => {
 
     expect(openSyncModal).not.toHaveBeenCalled();
     expect(connector.syncCards).toHaveBeenCalledWith(
-      [{ question: 'Buffered', answer: 'Value', line: 1 }],
-      false,
+      [{ question: 'Buffered', answer: 'Value' }],
       'note.md',
       'Q: Buffered\nA: Value',
       false,
@@ -369,8 +368,7 @@ describe('sync current note command', () => {
         cardsToUpdate: [],
         cardsToDelete: [
           {
-            card: { question: 'Old', answer: '', line: -1 },
-            action: 'delete',
+            card: { question: 'Old', answer: '' },
             deckName: 'note',
             existingCardId: '1',
           },
@@ -388,8 +386,7 @@ describe('sync current note command', () => {
     expect(confirmOptions).toHaveLength(1);
     expect(confirmOptions[0].message).toContain('delete 1 cards');
     expect(connector.syncCards).toHaveBeenCalledWith(
-      [{ question: 'Q', answer: 'A', line: 1 }],
-      false,
+      [{ question: 'Q', answer: 'A' }],
       'note.md',
       'Q: Q\nA: A',
       true,
@@ -439,8 +436,7 @@ describe('sync current note command', () => {
         cardsInConflict: [],
         cardsToDelete: [
           {
-            card: { question: 'Old', answer: '', line: -1 },
-            action: 'delete',
+            card: { question: 'Old', answer: '' },
             deckName: 'note',
             existingCardId: '1',
             externallyEdited: true,
@@ -509,7 +505,7 @@ describe('file menu sync entry', () => {
     entries[0].onClick?.();
 
     await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(1));
-    expect(connector.syncCards.mock.calls[0][2]).toBe('one.md');
+    expect(connector.syncCards.mock.calls[0][1]).toBe('one.md');
     expect(openSyncModal).not.toHaveBeenCalled();
     expect(confirmOptions).toHaveLength(0);
   });
@@ -534,7 +530,7 @@ describe('file menu sync entry', () => {
     entries[0].onClick?.();
 
     await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(2));
-    expect(connector.syncCards.mock.calls.map((call) => call[2])).toEqual(['one.md', 'two.md']);
+    expect(connector.syncCards.mock.calls.map((call) => call[1])).toEqual(['one.md', 'two.md']);
     expect(openSyncModal).not.toHaveBeenCalled();
   });
 
@@ -546,8 +542,7 @@ describe('file menu sync entry', () => {
         cardsToUpdate: [],
         cardsToDelete: [
           {
-            card: { question: 'Old', answer: '', line: -1 },
-            action: 'delete',
+            card: { question: 'Old', answer: '' },
             deckName: 'x',
             existingCardId: notePath === 'one.md' ? '11' : '22',
           },
@@ -568,10 +563,10 @@ describe('file menu sync entry', () => {
     expect(confirmOptions).toHaveLength(1);
     expect(confirmOptions[0].message).toContain('2 cards from 2 notes');
     expect(confirmOptions[0].items).toEqual(['one (1)', 'two (1)']);
-    expect(connector.syncCards.mock.calls[0][4]).toBe(true);
-    expect(connector.syncCards.mock.calls[0][5]).toEqual(['11']);
-    expect(connector.syncCards.mock.calls[1][4]).toBe(true);
-    expect(connector.syncCards.mock.calls[1][5]).toEqual(['22']);
+    expect(connector.syncCards.mock.calls[0][3]).toBe(true);
+    expect(connector.syncCards.mock.calls[0][4]).toEqual(['11']);
+    expect(connector.syncCards.mock.calls[1][3]).toBe(true);
+    expect(connector.syncCards.mock.calls[1][4]).toEqual(['22']);
   });
 
   it('does not add an entry for a non-Markdown file', async () => {
@@ -902,8 +897,7 @@ describe('sync on save', () => {
 
     await harness.plugin.syncCardsToAnki(
       false,
-      false,
-      createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'note.md', 'Q: Q\nA: A')
+      createSyncContext([{ question: 'Q', answer: 'A' }], 'note.md', 'Q: Q\nA: A')
     );
 
     expect(cache.has('note.md')).toBe(false);

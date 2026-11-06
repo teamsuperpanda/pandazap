@@ -426,7 +426,6 @@ export class SyncModal extends Modal {
 
     await this.hideUiAndSync((runOptions) =>
       this.plugin.syncCardsToAnki(
-        false,
         deleteConfirmed,
         this.syncContext,
         confirmedDeletionIds,
@@ -487,13 +486,7 @@ export class SyncModal extends Modal {
     }
 
     await this.hideUiAndSync((runOptions) =>
-      this.plugin.syncBatchCards(
-        bContext,
-        false,
-        deleteConfirmed,
-        confirmedDeletionIdsByNote,
-        runOptions
-      )
+      this.plugin.syncBatchCards(bContext, deleteConfirmed, confirmedDeletionIdsByNote, runOptions)
     );
   }
 
@@ -586,7 +579,7 @@ export class SyncModal extends Modal {
       .filter((card) => !skippedSet.has(card))
       .forEach((card) => {
         const item = resultsList.createDiv('panda-zap-result-item');
-        item.createSpan({ text: formatSyncCardResult(card, this.plugin.settings) });
+        item.createSpan({ text: formatSyncCardResult(card) });
       });
     if (result.deletion?.failed) {
       const item = resultsList.createDiv('panda-zap-result-item');
@@ -607,7 +600,7 @@ export class SyncModal extends Modal {
       );
       skipped.forEach((card) => {
         const item = skippedList.createDiv('panda-zap-result-item');
-        item.createSpan({ text: formatSyncCardResult(card, this.plugin.settings) });
+        item.createSpan({ text: formatSyncCardResult(card) });
       });
       skipHeader.onclick = () => {
         const isHidden = skippedList.classList.contains('hidden');

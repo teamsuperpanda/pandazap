@@ -25,7 +25,6 @@ vi.mock('../src/main', () => ({ default: class {} }));
 import { SyncModal } from '../src/dialogs/SyncModal';
 import { Modal } from 'obsidian';
 import {
-  CardAction,
   DEFAULT_SETTINGS,
   createBatchSyncContext,
   createSyncContext,
@@ -55,8 +54,7 @@ function analysis(overrides: Partial<SyncAnalysis> = {}): SyncAnalysis {
 
 function deletion(id: string, notePath?: string, externallyEdited = false): CardSyncInfo {
   return {
-    card: { question: 'Removed question', answer: 'Removed answer', line: -1 },
-    action: CardAction.DELETE,
+    card: { question: 'Removed question', answer: 'Removed answer' },
     deckName: 'Default',
     existingCardId: id,
     notePath,
@@ -103,7 +101,6 @@ describe('SyncModal deletion handling', () => {
 
     expect(confirm).toHaveBeenCalledWith(1, undefined, 0);
     expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(
-      false,
       true,
       context,
       ['11'],
@@ -168,9 +165,8 @@ describe('SyncModal deletion handling', () => {
     await modal.performBatchSync(batchContext);
 
     expect(confirm).toHaveBeenCalledWith(1, 1, 0);
-    const [, , deleteConfirmed, idsByNote] = plugin.syncBatchCards.mock.calls[0] as [
+    const [, deleteConfirmed, idsByNote] = plugin.syncBatchCards.mock.calls[0] as [
       BatchSyncContext,
-      boolean,
       boolean,
       ReadonlyMap<string, readonly string[]>,
     ];
@@ -192,7 +188,7 @@ describe('SyncModal deletion handling', () => {
   });
 
   it('blocks closing while a sync is running', async () => {
-    const context = createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md');
+    const context = createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md');
     const plugin = pluginStub(context, analysis(), analysis());
     let release: (() => void) | undefined;
     plugin.syncCardsToAnki.mockImplementation(
@@ -217,7 +213,7 @@ describe('SyncModal deletion handling', () => {
   });
 
   it('does not start a sync once the modal closed', async () => {
-    const context = createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md');
+    const context = createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md');
     const plugin = pluginStub(context, analysis(), analysis());
     const modal = createModal(plugin);
     (modal as unknown as { closed: boolean }).closed = true;

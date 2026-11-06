@@ -3,7 +3,6 @@ import {
   AnkiCard,
   PandaZapSettings,
   SyncAnalysis,
-  CardAction,
   CardSyncInfo,
   AnkiNoteInfo,
   AnkiCardInfo,
@@ -165,7 +164,6 @@ export class AnkiConnector {
           } else {
             const cardSyncInfo: CardSyncInfo = {
               card,
-              action: CardAction.UPDATE,
               deckName,
               existingCardId: existingEntry.noteId,
             };
@@ -183,7 +181,7 @@ export class AnkiConnector {
           throw e;
         }
       } else {
-        analysis.cardsToAdd.push({ card, action: CardAction.ADD, deckName });
+        analysis.cardsToAdd.push({ card, deckName });
       }
     }
 
@@ -229,11 +227,10 @@ export class AnkiConnector {
             const front = ni.fields?.Front?.value?.trim() ?? '';
             const back = ni.fields?.Back?.value?.trim() ?? '';
             if (front && !extractedQuestions.has(normalizeField(front))) {
-              const delCard = { question: front, answer: back, line: -1 };
+              const delCard = { question: front, answer: back };
               const noteId = ankiNoteId(ni);
               analysis.cardsToDelete.push({
                 card: delCard,
-                action: CardAction.DELETE,
                 deckName,
                 existingCardId: noteId,
                 externallyEdited: this.isExternallyEdited(ni, front, back),
@@ -261,7 +258,6 @@ export class AnkiConnector {
 
   async syncCards(
     cards: readonly AnkiCard[],
-    preview: boolean = false,
     notePath?: string,
     noteContent?: string,
     deleteConfirmed: boolean = false,
@@ -286,7 +282,7 @@ export class AnkiConnector {
     // Silent sync never overwrites an edit made in Anki, even when the setting allows it.
     const skipConflicts = runOptions?.skipConflicts === true;
 
-    if (this.settings.useNoteBased && notePath && !preview && cards.length > 0 && !isCancelled()) {
+    if (this.settings.useNoteBased && notePath && cards.length > 0 && !isCancelled()) {
       try {
         await this.ankiConnectRequest('createDeck', {
           deck: deckName,
@@ -305,70 +301,64 @@ export class AnkiConnector {
           continue;
         }
 
-        if (preview) {
-          const targetDeck =
-            this.settings.useNoteBased && notePath ? deckName : this.settings.defaultDeck;
-          results.push({ card, status: 'preview', deckName: targetDeck });
-        } else {
-          let finalBack = card.answer;
-          if (card.image && notePath) {
-            try {
-              const storedFilename = await this.uploadImageToAnki(card.image, notePath);
-              if (storedFilename) {
-                if (finalBack) {
-                  finalBack += `<br><img src="${storedFilename}">`;
-                } else {
-                  finalBack = `<img src="${storedFilename}">`;
-                }
-              }
-            } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : 'Unknown error';
-              results.push({ card, status: 'image-failed', reason: msg });
-              continue;
-            }
-          }
-
-          const updateStatus = await this.updateExistingCard(
-            card,
-            deckName,
-            finalBack,
-            notePath,
-            noteContent,
-            skipConflicts
-          );
-
-          if (updateStatus.status === 'updated') {
-            results.push({ card, status: 'updated', deckName });
-          } else if (updateStatus.status === 'identical') {
-            results.push({ card, status: 'skipped-identical', deckName });
-          } else if (updateStatus.status === 'conflict') {
-            results.push({ card, status: 'conflict', deckName, reason: 'changed in Anki' });
-          } else {
-            try {
-              await this.ankiConnectRequest('addNote', {
-                note: {
-                  deckName: deckName,
-                  modelName: this.settings.noteType,
-                  fields: {
-                    Front: card.question,
-                    Back: finalBack,
-                  },
-                  tags: [
-                    'panda-zap',
-                    'obsidian',
-                    ...(notePath ? [this.getSourceTag(notePath)] : []),
-                    this.syncTagFor(card.question, finalBack),
-                  ],
-                },
-              });
-              results.push({ card, status: 'added', deckName });
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message.toLowerCase() : '';
-              if (msg.includes('duplicate') || msg.includes('cannot create note')) {
-                results.push({ card, status: 'skipped-existing', deckName });
+        let finalBack = card.answer;
+        if (card.image && notePath) {
+          try {
+            const storedFilename = await this.uploadImageToAnki(card.image, notePath);
+            if (storedFilename) {
+              if (finalBack) {
+                finalBack += `<br><img src="${storedFilename}">`;
               } else {
-                throw err;
+                finalBack = `<img src="${storedFilename}">`;
               }
+            }
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Unknown error';
+            results.push({ card, status: 'image-failed', reason: msg });
+            continue;
+          }
+        }
+
+        const updateStatus = await this.updateExistingCard(
+          card,
+          deckName,
+          finalBack,
+          notePath,
+          noteContent,
+          skipConflicts
+        );
+
+        if (updateStatus.status === 'updated') {
+          results.push({ card, status: 'updated', deckName });
+        } else if (updateStatus.status === 'identical') {
+          results.push({ card, status: 'skipped-identical', deckName });
+        } else if (updateStatus.status === 'conflict') {
+          results.push({ card, status: 'conflict', deckName, reason: 'changed in Anki' });
+        } else {
+          try {
+            await this.ankiConnectRequest('addNote', {
+              note: {
+                deckName: deckName,
+                modelName: this.settings.noteType,
+                fields: {
+                  Front: card.question,
+                  Back: finalBack,
+                },
+                tags: [
+                  'panda-zap',
+                  'obsidian',
+                  ...(notePath ? [this.getSourceTag(notePath)] : []),
+                  this.syncTagFor(card.question, finalBack),
+                ],
+              },
+            });
+            results.push({ card, status: 'added', deckName });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message.toLowerCase() : '';
+            if (msg.includes('duplicate') || msg.includes('cannot create note')) {
+              results.push({ card, status: 'skipped-existing', deckName });
+            } else {
+              throw err;
             }
           }
         }
@@ -385,7 +375,7 @@ export class AnkiConnector {
 
     // A cancellation stops before a delete that has not started. Notes deleted
     // by an earlier note in a batch keep their result.
-    if (!preview && deleteConfirmed && notePath && !isCancelled()) {
+    if (deleteConfirmed && notePath && !isCancelled()) {
       try {
         const toDelete = confirmedDeletionIds
           ? [...new Set(confirmedDeletionIds.filter(Boolean))]

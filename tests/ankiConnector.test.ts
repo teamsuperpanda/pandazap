@@ -140,7 +140,7 @@ describe('AnkiConnector', () => {
 
     const connector = new AnkiConnector(settings, app);
     await expect(
-      connector.analyzeSyncOperation([{ question: 'Q', answer: 'A', line: 1 }], 'one.md')
+      connector.analyzeSyncOperation([{ question: 'Q', answer: 'A' }], 'one.md')
     ).rejects.toThrow('lookup failed');
   });
 
@@ -160,14 +160,10 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${body.action}`);
     });
 
-    const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'new', line: 1 }],
-      false,
-      'mine.md'
-    );
+    const result = await connector.syncCards([{ question: 'Q', answer: 'new' }], 'mine.md');
 
     expect(result.cards).toEqual([
-      { card: { question: 'Q', answer: 'new', line: 1 }, status: 'added', deckName: 'mine' },
+      { card: { question: 'Q', answer: 'new' }, status: 'added', deckName: 'mine' },
     ]);
     expect(formatSyncResult(result)).toEqual(['Added: Q -> mine']);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
@@ -201,13 +197,9 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${body.action}`);
     });
 
-    const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'new', line: 1 }],
-      false,
-      'mine.md'
-    );
+    const result = await connector.syncCards([{ question: 'Q', answer: 'new' }], 'mine.md');
     expect(result.cards).toEqual([
-      { card: { question: 'Q', answer: 'new', line: 1 }, status: 'updated', deckName: 'mine' },
+      { card: { question: 'Q', answer: 'new' }, status: 'updated', deckName: 'mine' },
     ]);
     expect(formatSyncResult(result)).toEqual(['Updated: Q -> mine']);
   });
@@ -245,11 +237,7 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${body.action}`);
     });
 
-    const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'new', line: 1 }],
-      false,
-      path
-    );
+    const result = await connector.syncCards([{ question: 'Q', answer: 'new' }], path);
     expect(result.cards[0]).toMatchObject({ status: 'skipped-identical' });
     expect(formatSyncResult(result)[0]).toMatch(/^Skipped \(already up-to-date\): Q/);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
@@ -287,7 +275,7 @@ describe('AnkiConnector', () => {
     });
 
     const analysis = await connector.analyzeSyncOperation(
-      [{ question: 'Mine', answer: 'answer', line: 2 }],
+      [{ question: 'Mine', answer: 'answer' }],
       path,
       `Deck:: ${overriddenDeck}\nQ: Mine\nA: answer`
     );
@@ -327,22 +315,21 @@ describe('AnkiConnector', () => {
     });
 
     const analysis = await connector.analyzeSyncOperation(
-      [{ question: 'Other', answer: 'answer', line: 2 }],
+      [{ question: 'Other', answer: 'answer' }],
       path,
       'Deck:: Shared\nQ: Other\nA: answer'
     );
     expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['42']);
 
     const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'A', line: 2 }],
-      false,
+      [{ question: 'Q', answer: 'A' }],
       path,
       'Deck:: Shared\nQ: Q\nA: A'
     );
 
     expect(result.cards).toEqual([
       {
-        card: { question: 'Q', answer: 'A', line: 2 },
+        card: { question: 'Q', answer: 'A' },
         status: 'skipped-identical',
         deckName: 'Shared',
       },
@@ -367,14 +354,10 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'second', line: 1 }],
-      false,
-      'mine.md'
-    );
+    const result = await connector.syncCards([{ question: 'Q', answer: 'second' }], 'mine.md');
 
     expect(result.cards).toEqual([
-      { card: { question: 'Q', answer: 'second', line: 1 }, status: 'added', deckName: 'Default' },
+      { card: { question: 'Q', answer: 'second' }, status: 'added', deckName: 'Default' },
     ]);
     expect(requests('addNote')).toHaveLength(1);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
@@ -404,7 +387,7 @@ describe('AnkiConnector', () => {
     });
 
     const analysis = await connector.analyzeSyncOperation(
-      [{ question: 'Kept', answer: 'answer', line: 1 }],
+      [{ question: 'Kept', answer: 'answer' }],
       'mine.md'
     );
     expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
@@ -412,7 +395,7 @@ describe('AnkiConnector', () => {
       `deck:"Default" tag:panda-zap tag:${mineTag}`
     );
 
-    const result = await connector.syncCards([], false, 'mine.md', undefined, true, ['11']);
+    const result = await connector.syncCards([], 'mine.md', undefined, true, ['11']);
     expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
     expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
   });
@@ -445,9 +428,7 @@ describe('AnkiConnector', () => {
     expect(queries.join(' ')).not.toContain('deck:');
     expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
 
-    const result = await connector.syncCards([], false, 'mine.md', 'Nothing left here', true, [
-      '11',
-    ]);
+    const result = await connector.syncCards([], 'mine.md', 'Nothing left here', true, ['11']);
     expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
     expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
     // A deletion-only sync must not leave an empty deck behind.
@@ -463,7 +444,6 @@ describe('AnkiConnector', () => {
 
     const result = await new AnkiConnector(settings, app).syncCards(
       [],
-      false,
       'mine.md',
       'Nothing left here',
       true,
@@ -498,8 +478,7 @@ describe('AnkiConnector', () => {
     });
 
     const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'A', line: 1 }],
-      false,
+      [{ question: 'Q', answer: 'A' }],
       'mine.md',
       'Q: Q\nA: A',
       true,
@@ -523,7 +502,6 @@ describe('AnkiConnector', () => {
 
     const result = await new AnkiConnector(settings, app).syncCards(
       [],
-      false,
       'mine.md',
       'Q: Q\nA: A',
       true,
@@ -550,14 +528,10 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${action}`);
     });
 
-    const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'new', line: 1 }],
-      false,
-      'mine.md'
-    );
+    const result = await connector.syncCards([{ question: 'Q', answer: 'new' }], 'mine.md');
     expect(result.cards).toEqual([
       {
-        card: { question: 'Q', answer: 'new', line: 1 },
+        card: { question: 'Q', answer: 'new' },
         status: 'failed',
         reason: 'update failed',
       },
@@ -580,13 +554,12 @@ describe('AnkiConnector', () => {
     });
 
     const result = await connector.syncCards(
-      [{ question: 'Q', answer: 'A', image: 'image.png', line: 1 }],
-      false,
+      [{ question: 'Q', answer: 'A', image: 'image.png' }],
       'mine.md'
     );
     expect(result.cards).toEqual([
       {
-        card: { question: 'Q', answer: 'A', image: 'image.png', line: 1 },
+        card: { question: 'Q', answer: 'A', image: 'image.png' },
         status: 'image-failed',
         reason: 'media failed',
       },
@@ -622,7 +595,7 @@ describe('AnkiConnector', () => {
     });
 
     const analysis = await connector.analyzeSyncOperation(
-      [{ question: 'Q', answer: 'A', image: 'image.png', line: 1 }],
+      [{ question: 'Q', answer: 'A', image: 'image.png' }],
       'mine.md'
     );
 
@@ -648,9 +621,9 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    const cards = [{ question: 'Q', answer: 'A' }];
     await connector.analyzeSyncOperation(cards, 'mine.md');
-    const result = await connector.syncCards(cards, false, 'mine.md');
+    const result = await connector.syncCards(cards, 'mine.md');
 
     expect(formatSyncResult(result)).toEqual(['Skipped (already up-to-date): Q -> Default']);
     expect(deckLookups('Default')).toHaveLength(1);
@@ -666,7 +639,7 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    const cards = [{ question: 'Q', answer: 'A' }];
     await connector.analyzeSyncOperation(cards, 'mine.md');
     connector.updateSettings({ ...deckSettings, ankiConnectPort: 8766 });
     await connector.analyzeSyncOperation(cards, 'mine.md');
@@ -683,7 +656,7 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    const cards = [{ question: 'Q', answer: 'A' }];
     await connector.analyzeSyncOperation(cards, 'mine.md');
     connector.updateSettings({ ...deckSettings, defaultDeck: 'Renamed' });
     await connector.analyzeSyncOperation(cards, 'mine.md');
@@ -701,7 +674,7 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    const cards = [{ question: 'Q', answer: 'A' }];
     await connector.analyzeSyncOperation(cards, 'mine.md');
     connector.updateSettings({ ...deckSettings, questionWord: 'Question' });
     await connector.analyzeSyncOperation(cards, 'mine.md');
@@ -718,7 +691,7 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    const cards = [{ question: 'Q', answer: 'A' }];
     await connector.analyzeSyncOperation(cards, 'mine.md');
     connector.invalidateCache();
     await connector.analyzeSyncOperation(cards, 'mine.md');
@@ -739,11 +712,11 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
-    await connector.syncCards(cards, false, 'mine.md');
+    const cards = [{ question: 'Q', answer: 'A' }];
+    await connector.syncCards(cards, 'mine.md');
     // main.ts clears the cache once after syncCardsToAnki returns.
     connector.invalidateCache();
-    await connector.syncCards(cards, false, 'mine.md');
+    await connector.syncCards(cards, 'mine.md');
 
     expect(deckLookups('Default')).toHaveLength(2);
     expect(requests('notesInfo')).toHaveLength(2);
@@ -760,9 +733,9 @@ describe('AnkiConnector', () => {
     });
 
     const content = 'Deck:: Shared\nQ: Q\nA: A';
-    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
-    await connector.syncCards(cards, false, 'one.md', content);
-    await connector.syncCards(cards, false, 'two.md', content);
+    const cards = [{ question: 'Q', answer: 'A' }];
+    await connector.syncCards(cards, 'one.md', content);
+    await connector.syncCards(cards, 'two.md', content);
 
     expect(deckLookups('Shared')).toHaveLength(1);
     expect(requests('addNote')).toHaveLength(2);
@@ -852,12 +825,11 @@ describe('AnkiConnector', () => {
       if (action === 'addNote') return response('1');
       throw new Error(`Unexpected action: ${action}`);
     });
-    const cards = [1, 2, 3].map((line) => ({ question: `Q${line}`, answer: 'A', line }));
+    const cards = [1, 2, 3].map((n) => ({ question: `Q${n}`, answer: 'A' }));
     const progress: Array<[number, number]> = [];
 
     const result = await new AnkiConnector(settings, app).syncCards(
       cards,
-      false,
       'mine.md',
       undefined,
       false,
@@ -886,12 +858,11 @@ describe('AnkiConnector', () => {
       if (action === 'addNote') return response('1');
       throw new Error(`Unexpected action: ${action}`);
     });
-    const cards = [1, 2, 3].map((line) => ({ question: `Q${line}`, answer: 'A', line }));
+    const cards = [1, 2, 3].map((n) => ({ question: `Q${n}`, answer: 'A' }));
     const abort = { cancelled: false };
 
     const result = await new AnkiConnector(settings, app).syncCards(
       cards,
-      false,
       'mine.md',
       undefined,
       false,
@@ -919,11 +890,10 @@ describe('AnkiConnector', () => {
       throw new Error(`Unexpected action: ${action}`);
     });
     const abort = { cancelled: false };
-    const card = { question: 'Q', answer: 'A', line: 1 };
+    const card = { question: 'Q', answer: 'A' };
 
     const result = await new AnkiConnector(settings, app).syncCards(
       [card],
-      false,
       'mine.md',
       'Q: Q\nA: A',
       true,

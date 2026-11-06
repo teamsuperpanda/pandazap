@@ -4,7 +4,6 @@ export interface AnkiCard {
   question: string;
   answer: string;
   image?: string;
-  line: number;
 }
 
 /** Shape of a single note returned by Anki Connect's notesInfo action */
@@ -89,15 +88,8 @@ export interface PandaZapSettings {
   pendingTagMigrations: PendingTagMigration[];
 }
 
-export enum CardAction {
-  ADD = 'add',
-  UPDATE = 'update',
-  DELETE = 'delete',
-}
-
 export interface CardSyncInfo {
   card: AnkiCard;
-  action: CardAction;
   deckName: string;
   existingCardId?: string;
   /** Source note path, set during batch sync to identify which note a card belongs to. */
@@ -123,8 +115,7 @@ export type SyncCardStatus =
   | 'skipped-identical'
   | 'conflict'
   | 'image-failed'
-  | 'failed'
-  | 'preview';
+  | 'failed';
 
 export interface SyncCardResult {
   card: AnkiCard;
@@ -240,7 +231,7 @@ export function describeSyncModalStatus(
 }
 
 /** Render one card result as a human-readable line. */
-export function formatSyncCardResult(result: SyncCardResult, settings?: PandaZapSettings): string {
+export function formatSyncCardResult(result: SyncCardResult): string {
   const { card, status, deckName, reason } = result;
   const target = deckName ? ` -> ${deckName}` : '';
   switch (status) {
@@ -258,19 +249,12 @@ export function formatSyncCardResult(result: SyncCardResult, settings?: PandaZap
       return `Image failed (${card.image}): ${reason ?? 'Unknown error'}`;
     case 'failed':
       return `Failed: ${card.question} - ${reason ?? 'Unknown error'}`;
-    case 'preview': {
-      const qWord = (settings?.questionWord || '').trim() || 'Q';
-      const aWord = (settings?.answerWord || '').trim() || 'A';
-      const imageInfo = card.image ? ` | Image: ${card.image}` : '';
-      const answerInfo = card.answer ? card.answer : '(image only)';
-      return `Preview: ${qWord}: ${card.question} | ${aWord}: ${answerInfo}${imageInfo} | Deck: ${deckName ?? ''}`;
-    }
   }
 }
 
 /** Render a whole sync result as human-readable lines. */
-export function formatSyncResult(result: SyncResult, settings?: PandaZapSettings): string[] {
-  const lines = result.cards.map((card) => formatSyncCardResult(card, settings));
+export function formatSyncResult(result: SyncResult): string[] {
+  const lines = result.cards.map((card) => formatSyncCardResult(card));
   if (result.deletion) {
     lines.push(
       result.deletion.failed

@@ -22,7 +22,7 @@ function settings(overrides: Partial<PandaZapSettings> = {}): PandaZapSettings {
 }
 
 function card(answer: string, question = 'Q'): AnkiCard {
-  return { question, answer, line: 1 };
+  return { question, answer };
 }
 
 function syncTags(tags: readonly string[]): string[] {
@@ -43,7 +43,7 @@ function sourceTag(connector: AnkiConnector, notePath: string): string {
 
 /** Adds one card through the connector, then drops the deck cache like a sync does. */
 async function seedSyncedNote(connector: AnkiConnector, anki: FakeAnkiState): Promise<FakeNote> {
-  const result = await connector.syncCards([card('A')], false, NOTE_PATH, NOTE_CONTENT);
+  const result = await connector.syncCards([card('A')], NOTE_PATH, NOTE_CONTENT);
   expect(result.cards[0].status).toBe('added');
   connector.invalidateCache();
   return anki.notes[0];
@@ -68,7 +68,7 @@ describe('Anki edit detection', () => {
     expect(analysis.cardsInConflict).toHaveLength(1);
     expect(analysis.cardsToUpdate).toHaveLength(0);
 
-    const result = await connector.syncCards([card('A')], false, NOTE_PATH);
+    const result = await connector.syncCards([card('A')], NOTE_PATH);
 
     expect(result.cards[0]).toMatchObject({ status: 'conflict' });
     expect(anki.requests.some((request) => request.action === 'updateNoteFields')).toBe(false);
@@ -87,7 +87,7 @@ describe('Anki edit detection', () => {
     note.back = 'Edited in Anki';
     anki.requests.length = 0;
 
-    const result = await connector.syncCards([card('Local answer')], false, NOTE_PATH);
+    const result = await connector.syncCards([card('Local answer')], NOTE_PATH);
 
     expect(result.cards[0]).toMatchObject({ status: 'updated' });
     expect(anki.requests.some((request) => request.action === 'updateNoteFields')).toBe(true);
@@ -101,7 +101,7 @@ describe('Anki edit detection', () => {
     const anki = installFakeAnki(requestUrl);
     const note = await seedSyncedNote(connector, anki);
 
-    const result = await connector.syncCards([card('Local answer')], false, NOTE_PATH);
+    const result = await connector.syncCards([card('Local answer')], NOTE_PATH);
 
     expect(result.cards[0]).toMatchObject({ status: 'updated' });
     expect(note.back).toBe('Local answer');
@@ -128,7 +128,7 @@ describe('Anki edit detection', () => {
     expect(analysis.cardsInConflict).toHaveLength(0);
     expect(analysis.cardsToUpdate).toHaveLength(1);
 
-    const result = await connector.syncCards([card('Local answer')], false, NOTE_PATH);
+    const result = await connector.syncCards([card('Local answer')], NOTE_PATH);
     const note = anki.notes[0];
 
     expect(result.cards[0]).toMatchObject({ status: 'updated' });
@@ -143,7 +143,7 @@ describe('Anki edit detection', () => {
 
     for (const answer of ['B', 'C', 'D']) {
       connector.invalidateCache();
-      const result = await connector.syncCards([card(answer)], false, NOTE_PATH);
+      const result = await connector.syncCards([card(answer)], NOTE_PATH);
       expect(result.cards[0]).toMatchObject({ status: 'updated' });
       expect(syncTags(note.tags)).toHaveLength(1);
     }
@@ -162,7 +162,6 @@ describe('Anki edit detection', () => {
 
     const result = await connector.syncCards(
       [card('Local answer')],
-      false,
       NOTE_PATH,
       undefined,
       false,

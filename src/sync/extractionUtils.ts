@@ -269,7 +269,6 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
           question: matchAll[1].trim(),
           answer: matchAll[2].trim(),
           image: parseImagePath(matchAll[3]) || undefined,
-          line: i + 1,
         });
         continue;
       }
@@ -281,7 +280,6 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
             question: matchQI[1].trim(),
             answer: '',
             image: parseImagePath(matchQI[2]) || undefined,
-            line: i + 1,
           });
           continue;
         }
@@ -294,7 +292,6 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
           cards.push({
             question: matchQA[1].trim(),
             answer: possibleAnswer.trim(),
-            line: i + 1,
           });
           continue;
         }
@@ -360,7 +357,6 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
             question: questionText,
             answer: answerLines.join('\n').trim(),
             image: imagePath || undefined,
-            line: i + 1,
           });
           i = j - 1;
         }
@@ -373,5 +369,3 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
 
   return cards;
 }
-
-export default extractQACardsFromText;

@@ -274,8 +274,7 @@ describe('note rename migration', () => {
     await expect(
       plugin.syncCardsToAnki(
         false,
-        false,
-        createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'folder/renamed.md', '')
+        createSyncContext([{ question: 'Q', answer: 'A' }], 'folder/renamed.md', '')
       )
     ).rejects.toThrow('renamed note "folder/renamed.md"');
 
@@ -517,7 +516,7 @@ describe('note rename migration', () => {
 
     // The note is no longer blocked: its own cards are migrated.
     const syncCards = vi.spyOn(connectorOf(plugin), 'syncCards').mockResolvedValue({ cards: [] });
-    await plugin.syncCardsToAnki(false, false, createSyncContext([], 'z.md', ''));
+    await plugin.syncCardsToAnki(false, createSyncContext([], 'z.md', ''));
     expect(syncCards).toHaveBeenCalledTimes(1);
   });
 
@@ -534,9 +533,9 @@ describe('note rename migration', () => {
 
     const syncCards = vi.spyOn(connectorOf(plugin), 'syncCards').mockResolvedValue({ cards: [] });
     await expect(
-      plugin.syncCardsToAnki(false, false, createSyncContext([], 'folder/renamed.md', ''))
+      plugin.syncCardsToAnki(false, createSyncContext([], 'folder/renamed.md', ''))
     ).rejects.toThrow('Could not update Anki for renamed note');
-    await plugin.syncCardsToAnki(false, false, createSyncContext([], 'other.md', ''));
+    await plugin.syncCardsToAnki(false, createSyncContext([], 'other.md', ''));
     expect(syncCards).toHaveBeenCalledTimes(1);
 
     harness.state.readError = null;
@@ -567,11 +566,11 @@ describe('note rename migration', () => {
     ]);
 
     const syncCards = vi.spyOn(connectorOf(plugin), 'syncCards').mockResolvedValue({ cards: [] });
-    await plugin.syncCardsToAnki(false, false, createSyncContext([], 'other.md', ''));
+    await plugin.syncCardsToAnki(false, createSyncContext([], 'other.md', ''));
     expect(syncCards).toHaveBeenCalledTimes(1);
 
     await expect(
-      plugin.syncCardsToAnki(false, false, createSyncContext([], 'a/new.md', ''))
+      plugin.syncCardsToAnki(false, createSyncContext([], 'a/new.md', ''))
     ).rejects.toThrow('renamed note "a/new.md"');
     expect(syncCards).toHaveBeenCalledTimes(1);
   });
