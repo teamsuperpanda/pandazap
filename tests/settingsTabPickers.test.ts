@@ -88,10 +88,31 @@ class FakeButton {
   }
 }
 
+class FakeToggle {
+  value = false;
+  private change: ((value: boolean) => void) | null = null;
+
+  setValue(value: boolean): this {
+    this.value = value;
+    return this;
+  }
+
+  onChange(callback: (value: boolean) => void): this {
+    this.change = callback;
+    return this;
+  }
+
+  toggle(): void {
+    this.value = !this.value;
+    this.change?.(this.value);
+  }
+}
+
 class FakeSetting {
   descEl = { textContent: '' };
   dropdowns: FakeDropdown[] = [];
   buttons: FakeButton[] = [];
+  toggles: FakeToggle[] = [];
 
   setName(_name: string): this {
     return this;
@@ -116,6 +137,13 @@ class FakeSetting {
     return this;
   }
 
+  addToggle(callback: (toggle: FakeToggle) => unknown): this {
+    const toggle = new FakeToggle();
+    this.toggles.push(toggle);
+    callback(toggle as never);
+    return this;
+  }
+
   get dropdown(): FakeDropdown {
     return this.dropdowns[0];
   }
@@ -123,23 +151,29 @@ class FakeSetting {
 
 interface DefinitionLike {
   name?: string;
+  desc?: string;
   items?: DefinitionLike[];
   render?: (setting: FakeSetting, group: never) => void;
 }
 
-function renderSetting(tab: PandaZapSettingTab, name: string): FakeSetting {
+function findDefinition(tab: PandaZapSettingTab, name: string): DefinitionLike {
   const definitions = tab.getSettingDefinitions() as unknown as DefinitionLike[];
   const stack = [...definitions];
   while (stack.length > 0) {
     const definition = stack.shift();
     if (!definition) continue;
     if (definition.items) stack.push(...definition.items);
-    if (definition.name !== name || !definition.render) continue;
-    const setting = new FakeSetting();
-    definition.render(setting, {} as never);
-    return setting;
+    if (definition.name === name) return definition;
   }
   throw new Error(`No setting named ${name}`);
+}
+
+function renderSetting(tab: PandaZapSettingTab, name: string): FakeSetting {
+  const definition = findDefinition(tab, name);
+  if (!definition.render) throw new Error(`No render for setting ${name}`);
+  const setting = new FakeSetting();
+  definition.render(setting, {} as never);
+  return setting;
 }
 
 function pluginStub(overrides: Partial<PandaZapSettings> = {}) {
@@ -255,6 +289,22 @@ describe('settings pickers', () => {
 
     expect(plugin.listAnkiNames).toHaveBeenCalledTimes(2);
     expect(setting.dropdown.optionValues).toEqual(['Default', 'French']);
+  });
+
+  it('exposes and saves the Anki edit overwrite setting', () => {
+    const plugin = pluginStub();
+    const tab = createTab(plugin);
+    const setting = renderSetting(tab, 'Overwrite changes made in Anki');
+
+    expect(tab.getSettingDefinitions()).toBeDefined();
+    expect(findDefinition(tab, 'Overwrite changes made in Anki').desc).toContain(
+      'Overwrite changes made in Anki when syncing'
+    );
+
+    setting.toggles[0].toggle();
+
+    expect(plugin.settings.overwriteAnkiEdits).toBe(true);
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
   });
 
   it('caches the names per connection and refreshes when it changes', async () => {

@@ -14,6 +14,7 @@ const defaultSettings: PandaZapSettings = {
   boldQuestionInReadingMode: true,
   imageWord: 'I',
   syncOnSave: false,
+  overwriteAnkiEdits: false,
   pendingTagMigrations: [],
 };
 

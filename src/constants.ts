@@ -12,5 +12,8 @@ export const SYNC_STATUS_ERROR_REPEAT_MS = 30000;
 export const ANKI_CONNECT_DEFAULT_PORT = 8765;
 export const ANKI_CONNECT_DEFAULT_URL = 'http://127.0.0.1';
 export const PLUGIN_TAG = 'panda-zap';
+// One per note: a fingerprint of the Front and Back last pushed, so a later
+// sync can tell whether the note was edited directly in Anki.
+export const SYNC_HASH_TAG_PREFIX = 'pandazap-sync:';
 // Every file the plugin uploads to Anki's media folder starts with this prefix.
 export const MEDIA_FILENAME_PREFIX = 'pandazap_';

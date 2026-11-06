@@ -81,6 +81,11 @@ export interface PandaZapSettings {
   boldQuestionInReadingMode: boolean;
   /** Sync notes shortly after saving, but only notes that already exist in Anki. */
   syncOnSave: boolean;
+  /**
+   * Overwrite notes that were changed directly in Anki. Off by default, so an
+   * external edit is reported and left alone instead of being destroyed.
+   */
+  overwriteAnkiEdits: boolean;
   pendingTagMigrations: PendingTagMigration[];
 }
 
@@ -97,12 +102,16 @@ export interface CardSyncInfo {
   existingCardId?: string;
   /** Source note path, set during batch sync to identify which note a card belongs to. */
   notePath?: string;
+  /** Deleting this note would discard an edit made directly in Anki. */
+  externallyEdited?: boolean;
 }
 
 export interface SyncAnalysis {
   cardsToAdd: CardSyncInfo[];
   cardsToUpdate: CardSyncInfo[];
   cardsToDelete: CardSyncInfo[];
+  /** Existing cards skipped because they changed in Anki (overwrite setting off). */
+  cardsInConflict: CardSyncInfo[];
   totalCards: number;
 }
 
@@ -112,6 +121,7 @@ export type SyncCardStatus =
   | 'updated'
   | 'skipped-existing'
   | 'skipped-identical'
+  | 'conflict'
   | 'image-failed'
   | 'failed'
   | 'preview';
@@ -151,6 +161,11 @@ export interface SyncRunOptions {
   onProgress?: (done: number, total: number) => void;
   /** Checked between cards and before deletions; setting `cancelled` stops the run. */
   abort?: SyncAbortToken;
+  /**
+   * Skip cards changed in Anki regardless of `overwriteAnkiEdits`. Silent sync
+   * sets this so an edit the user did not ask to sync is never overwritten.
+   */
+  skipConflicts?: boolean;
 }
 
 /** State of a sync run that was cancelled by the user. */
@@ -237,6 +252,8 @@ export function formatSyncCardResult(result: SyncCardResult, settings?: PandaZap
       return `Skipped (already exists): ${card.question}${target}`;
     case 'skipped-identical':
       return `Skipped (already up-to-date): ${card.question}${target}`;
+    case 'conflict':
+      return `Skipped (changed in Anki): ${card.question}${target}`;
     case 'image-failed':
       return `Image failed (${card.image}): ${reason ?? 'Unknown error'}`;
     case 'failed':
@@ -282,10 +299,13 @@ export function describeSyncResultNotice(
   const skipped = result.cards.filter(
     (card) => card.status === 'skipped-existing' || card.status === 'skipped-identical'
   ).length;
+  const conflicts = result.cards.filter((card) => card.status === 'conflict').length;
   const deleted = result.deletion && !result.deletion.failed ? result.deletion.deletedCount : 0;
   const deletionNote = deleted > 0 ? `, ${deleted} deleted` : '';
   const deletionFailedNote = result.deletion?.failed ? '; deletion failed' : '';
-  const summary = `${succeeded} succeeded, ${failed} failed, ${skipped} skipped`;
+  // Reported apart from ordinary skips, so an Anki edit is never hidden in a count.
+  const conflictNote = conflicts > 0 ? `, ${conflicts} changed in Anki` : '';
+  const summary = `${succeeded} succeeded, ${failed} failed, ${skipped} skipped${conflictNote}`;
 
   if (progress?.cancelled) {
     return `Cancelled after ${progress.done} of ${progress.total} cards: ${summary}${deletionNote}${deletionFailedNote}`;
@@ -296,7 +316,7 @@ export function describeSyncResultNotice(
   if (failed > 0 || result.deletion?.failed) {
     return `Sync completed with issues: ${summary}${deletionNote}${deletionFailedNote}`;
   }
-  return `Sync completed: ${succeeded} succeeded, ${skipped} skipped${deletionNote}`;
+  return `Sync completed: ${succeeded} succeeded, ${skipped} skipped${conflictNote}${deletionNote}`;
 }
 
 /** A point-in-time snapshot of the note used for one analysis/sync flow. */
@@ -352,5 +372,6 @@ export const DEFAULT_SETTINGS: PandaZapSettings = {
   useNoteBased: true,
   boldQuestionInReadingMode: true,
   syncOnSave: false,
+  overwriteAnkiEdits: false,
   pendingTagMigrations: [],
 };

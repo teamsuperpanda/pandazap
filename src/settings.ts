@@ -134,6 +134,10 @@ export function normalizeSettings(raw: unknown): PandaZapSettings {
       DEFAULT_SETTINGS.boldQuestionInReadingMode
     ),
     syncOnSave: normalizeBoolean(source.syncOnSave, DEFAULT_SETTINGS.syncOnSave),
+    overwriteAnkiEdits: normalizeBoolean(
+      source.overwriteAnkiEdits,
+      DEFAULT_SETTINGS.overwriteAnkiEdits
+    ),
     pendingTagMigrations: normalizePendingTagMigrations(source.pendingTagMigrations),
   };
 }

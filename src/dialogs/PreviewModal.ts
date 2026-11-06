@@ -29,7 +29,8 @@ export class PreviewModal extends Modal {
     const totalChanges =
       this.syncAnalysis.cardsToAdd.length +
       this.syncAnalysis.cardsToUpdate.length +
-      this.syncAnalysis.cardsToDelete.length;
+      this.syncAnalysis.cardsToDelete.length +
+      this.syncAnalysis.cardsInConflict.length;
     if (totalChanges === 0) {
       const emptyState = content.createDiv('panda-zap-empty-state');
       emptyState.createSpan({ text: '✨ No changes needed - all cards are up to date!' });
@@ -40,6 +41,14 @@ export class PreviewModal extends Modal {
     }
     if (this.syncAnalysis.cardsToUpdate.length > 0) {
       this.renderSection(content, 'update', '🔄 Cards to Update', this.syncAnalysis.cardsToUpdate);
+    }
+    if (this.syncAnalysis.cardsInConflict.length > 0) {
+      this.renderSection(
+        content,
+        'conflict',
+        '⚠️ Cards Changed in Anki (skipped)',
+        this.syncAnalysis.cardsInConflict
+      );
     }
     if (this.syncAnalysis.cardsToDelete.length > 0) {
       this.renderSection(content, 'delete', '🗑️ Cards to Remove', this.syncAnalysis.cardsToDelete);

@@ -109,6 +109,18 @@ export class PandaZapSettingTab extends PluginSettingTab {
             },
           },
           {
+            name: 'Overwrite changes made in Anki',
+            desc: 'Overwrite changes made in Anki when syncing. When off, cards you edited in Anki are skipped and reported. Sync on save always skips them.',
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.overwriteAnkiEdits).onChange((value) => {
+                  this.plugin.settings.overwriteAnkiEdits = value;
+                  void this.plugin.saveSettings();
+                })
+              );
+            },
+          },
+          {
             name: 'Bold question in reading mode',
             desc: 'When enabled, only the question (not the answer) will be bolded in reading mode; question/answer tags are still removed.',
             render: (setting) => {

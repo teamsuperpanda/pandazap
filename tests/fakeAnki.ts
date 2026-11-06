@@ -86,6 +86,8 @@ export function installFakeAnki(
     };
     state.requests.push(request);
     if (state.failActions.has(request.action)) throw new Error(`${request.action} failed`);
+    const nextNoteId = Math.max(0, ...state.notes.map((note) => Number(note.noteId) || 0)) + 1;
+    const nextCardId = Math.max(0, ...state.cards.map((card) => card.cardId)) + 1;
 
     switch (request.action) {
       case 'version':
@@ -162,9 +164,46 @@ export function installFakeAnki(
         return ok(null);
       }
       case 'createDeck':
-      case 'addNote':
-      case 'updateNoteFields':
         return ok(null);
+      case 'addNote': {
+        const note = request.params?.note as
+          | {
+              deckName?: string;
+              fields?: Record<string, string>;
+              tags?: string[];
+            }
+          | undefined;
+        const fields = note?.fields ?? {};
+        const created: FakeNote = {
+          noteId: String(nextNoteId),
+          front: fields.Front ?? '',
+          back: fields.Back ?? '',
+          tags: [...(note?.tags ?? [])],
+          cards: [nextCardId],
+        };
+        state.notes.push(created);
+        state.cards.push({
+          cardId: nextCardId,
+          note: nextNoteId,
+          deckName: note?.deckName ?? 'Default',
+        });
+        return ok(nextNoteId);
+      }
+      case 'updateNoteFields': {
+        const params = request.params?.note as
+          { id?: string | number; fields?: Record<string, string> } | undefined;
+        const note = state.notes.find((entry) => entry.noteId === String(params?.id));
+        if (note && params?.fields) {
+          for (const [name, value] of Object.entries(params.fields)) {
+            // Keep both views of the note in step: fields for notesInfo and
+            // front/back for the quoted full-text search.
+            if (name === 'Front') note.front = value;
+            if (name === 'Back') note.back = value;
+            if (note.fields) note.fields[name] = { value };
+          }
+        }
+        return ok(null);
+      }
       default:
         throw new Error(`Unexpected action: ${request.action}`);
     }

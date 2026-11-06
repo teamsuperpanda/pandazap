@@ -218,6 +218,7 @@ function stubConnector(overrides: Record<string, unknown> = {}) {
       cardsToAdd: [],
       cardsToUpdate: [],
       cardsToDelete: [],
+      cardsInConflict: [],
       totalCards: 0,
     }),
     syncCards: vi.fn().mockResolvedValue({ cards: [] }),
@@ -231,6 +232,14 @@ function useConnector(plugin: PandaZapPlugin, connector: ReturnType<typeof stubC
 
 function useSettings(plugin: PandaZapPlugin, overrides: Partial<PandaZapSettings> = {}): void {
   plugin.settings = { ...DEFAULT_SETTINGS, ...overrides };
+}
+
+/** The fingerprint the connector computes for a pushed Front and Back. */
+function syncTagFor(connector: AnkiConnector, front: string, back: string): string {
+  return (connector as unknown as { syncTagFor(f: string, b: string): string }).syncTagFor(
+    front,
+    back
+  );
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -326,6 +335,7 @@ describe('sync current note command', () => {
         cardsToAdd: [],
         cardsToUpdate: [],
         cardsToDelete: [],
+        cardsInConflict: [],
         totalCards: 1,
       }),
       syncCards: vi.fn().mockResolvedValue({
@@ -365,6 +375,7 @@ describe('sync current note command', () => {
             existingCardId: '1',
           },
         ],
+        cardsInConflict: [],
         totalCards: 1,
       }),
     });
@@ -409,8 +420,42 @@ describe('sync current note command', () => {
     expect(notices).toContain('A sync for one of these notes is already running');
     expect(connector.analyzeSyncOperation).toHaveBeenCalledTimes(1);
 
-    release({ cardsToAdd: [], cardsToUpdate: [], cardsToDelete: [], totalCards: 1 });
+    release({
+      cardsToAdd: [],
+      cardsToUpdate: [],
+      cardsToDelete: [],
+      cardsInConflict: [],
+      totalCards: 1,
+    });
     await first;
+  });
+
+  it('warns that externally edited cards are part of the delete set', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsInConflict: [],
+        cardsToDelete: [
+          {
+            card: { question: 'Old', answer: '', line: -1 },
+            action: 'delete',
+            deckName: 'note',
+            existingCardId: '1',
+            externallyEdited: true,
+          },
+        ],
+        totalCards: 1,
+      }),
+    });
+    useConnector(harness.plugin, connector);
+    harness.setActiveView(markdownView('note.md', 'Q: Q\nA: A'));
+
+    await harness.plugin.syncCurrentNote();
+
+    expect(confirmOptions).toHaveLength(1);
+    expect(confirmOptions[0].message).toContain('1 of these cards were changed in Anki');
   });
 
   it('bails when a silent run for the note is already in flight', async () => {
@@ -420,6 +465,7 @@ describe('sync current note command', () => {
         cardsToAdd: [],
         cardsToUpdate: [],
         cardsToDelete: [],
+        cardsInConflict: [],
         totalCards: 1,
       }),
     });
@@ -452,6 +498,7 @@ describe('file menu sync entry', () => {
         cardsToAdd: [],
         cardsToUpdate: [],
         cardsToDelete: [],
+        cardsInConflict: [],
         totalCards: 1,
       }),
     });
@@ -474,6 +521,7 @@ describe('file menu sync entry', () => {
         cardsToAdd: [],
         cardsToUpdate: [],
         cardsToDelete: [],
+        cardsInConflict: [],
         totalCards: 1,
       }),
     });
@@ -504,6 +552,7 @@ describe('file menu sync entry', () => {
             existingCardId: notePath === 'one.md' ? '11' : '22',
           },
         ],
+        cardsInConflict: [],
         totalCards: 1,
       })),
     });
@@ -628,6 +677,46 @@ describe('sync on save', () => {
     expect(anki.requests.some((request) => request.action === 'updateNoteFields')).toBe(false);
     expect(notices).toHaveLength(0);
     expect(statusBarState.text).toBe('Panda Zap: idle');
+  });
+
+  it('skips a card changed in Anki silently even when overwriting is enabled', async () => {
+    const settings: PandaZapSettings = {
+      ...DEFAULT_SETTINGS,
+      useNoteBased: false,
+      overwriteAnkiEdits: true,
+    };
+    const connector = new AnkiConnector(settings, {} as never);
+    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
+      'note.md'
+    );
+    const anki = installFakeAnki(requestUrl, {
+      notes: [
+        {
+          noteId: '1',
+          front: 'Q1',
+          back: 'Edited in Anki',
+          tags: ['panda-zap', sourceTag, syncTagFor(connector, 'Q1', 'A1')],
+          cards: [10],
+        },
+      ],
+      cards: [{ cardId: 10, note: 1, deckName: 'Default' }],
+    });
+    const harness = await createHarness({ 'note.md': 'Q: Q1\nA: A1' });
+    useConnector(harness.plugin, connector as unknown as ReturnType<typeof stubConnector>);
+    useSettings(harness.plugin, {
+      useNoteBased: false,
+      overwriteAnkiEdits: true,
+      syncOnSave: true,
+    });
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+
+    expect(anki.requests.some((request) => request.action === 'updateNoteFields')).toBe(false);
+    expect(anki.notes[0].back).toBe('Edited in Anki');
+    expect(statusBarState.text).toBe('Panda Zap: 1 changed in Anki');
+    expect(statusBarState.attributes.title).toContain('changed in Anki');
   });
 
   it('does not run while a sync dialog is open', async () => {

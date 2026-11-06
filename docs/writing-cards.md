@@ -310,6 +310,7 @@ A question with no content produces no card.
 
 - Keep questions short and answers clear - this works best for spaced repetition.
 - Use the preview before syncing to check how cards will look in Anki.
+- Cards you edit in Anki are skipped rather than overwritten. Enable "Overwrite changes made in Anki" in the settings if you want Obsidian to win instead.
 - If a card is missing, check it is not inside a code block or frontmatter.
 
 For troubleshooting and edge cases, see the main `README.md` or open a GitHub issue with a short example.

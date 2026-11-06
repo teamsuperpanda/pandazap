@@ -19,6 +19,7 @@ import {
 import {
   ANKI_CONNECT_VERSION,
   PLUGIN_TAG,
+  SYNC_HASH_TAG_PREFIX,
   MEDIA_FILENAME_PREFIX,
   REQUEST_TIMEOUT_MS,
   RETRY_BACKOFF_BASE_MS,
@@ -115,6 +116,7 @@ export class AnkiConnector {
       cardsToAdd: [],
       cardsToUpdate: [],
       cardsToDelete: [],
+      cardsInConflict: [],
       totalCards: cards.length,
     };
 
@@ -167,7 +169,14 @@ export class AnkiConnector {
               deckName,
               existingCardId: existingEntry.noteId,
             };
-            analysis.cardsToUpdate.push(cardSyncInfo);
+            if (
+              this.isExternallyEdited(existingEntry, front, back) &&
+              !this.settings.overwriteAnkiEdits
+            ) {
+              analysis.cardsInConflict.push(cardSyncInfo);
+            } else {
+              analysis.cardsToUpdate.push(cardSyncInfo);
+            }
           }
         } catch (e: unknown) {
           console.warn('PandaZap: failed to compare note info', e);
@@ -227,6 +236,7 @@ export class AnkiConnector {
                 action: CardAction.DELETE,
                 deckName,
                 existingCardId: noteId,
+                externallyEdited: this.isExternallyEdited(ni, front, back),
               });
             }
           } catch (e: unknown) {
@@ -273,6 +283,8 @@ export class AnkiConnector {
     runOptions?.onProgress?.(processedCards, totalCards);
 
     const isCancelled = () => runOptions?.abort?.cancelled === true;
+    // Silent sync never overwrites an edit made in Anki, even when the setting allows it.
+    const skipConflicts = runOptions?.skipConflicts === true;
 
     if (this.settings.useNoteBased && notePath && !preview && cards.length > 0 && !isCancelled()) {
       try {
@@ -321,13 +333,16 @@ export class AnkiConnector {
             deckName,
             finalBack,
             notePath,
-            noteContent
+            noteContent,
+            skipConflicts
           );
 
           if (updateStatus.status === 'updated') {
             results.push({ card, status: 'updated', deckName });
           } else if (updateStatus.status === 'identical') {
             results.push({ card, status: 'skipped-identical', deckName });
+          } else if (updateStatus.status === 'conflict') {
+            results.push({ card, status: 'conflict', deckName, reason: 'changed in Anki' });
           } else {
             try {
               await this.ankiConnectRequest('addNote', {
@@ -342,6 +357,7 @@ export class AnkiConnector {
                     'panda-zap',
                     'obsidian',
                     ...(notePath ? [this.getSourceTag(notePath)] : []),
+                    this.syncTagFor(card.question, finalBack),
                   ],
                 },
               });
@@ -396,34 +412,35 @@ export class AnkiConnector {
     deckName: string,
     backContentOverride?: string,
     notePath?: string,
-    noteContent?: string
-  ): Promise<{ status: 'updated' | 'identical' | 'missing' }> {
+    noteContent?: string,
+    skipConflicts = false
+  ): Promise<{ status: 'updated' | 'identical' | 'conflict' | 'missing' }> {
     await this.prefetchNotesForDeck(deckName);
     const cached = this.selectCacheEntry(card, notePath, deckName, noteContent);
     const noteId = cached?.noteId;
 
     const targetBack = backContentOverride !== undefined ? backContentOverride : card.answer;
 
-    if (noteId) {
-      let isIdentical = false;
-      try {
-        const front = (cached?.fields?.Front?.value ?? '').trim();
-        const back = (cached?.fields?.Back?.value ?? '').trim();
-        const qTrim = (card.question || '').trim();
-        const aTrim = (targetBack || '').trim();
+    if (noteId && cached) {
+      const front = (cached.fields.Front?.value ?? '').trim();
+      const back = (cached.fields.Back?.value ?? '').trim();
+      const qTrim = (card.question || '').trim();
+      const aTrim = (targetBack || '').trim();
 
-        if (fieldsMatch(front, qTrim)) {
-          if (fieldsMatch(back, aTrim)) {
-            isIdentical = true;
-          }
-        }
-      } catch (e: unknown) {
-        console.warn('PandaZap: failed to compare cached note fields', e);
+      if (fieldsMatch(front, qTrim) && fieldsMatch(back, aTrim)) {
+        // The note already holds this content. Record the fingerprint so the
+        // next edit made in Anki can be detected, without rewriting the fields.
+        await this.ensureNoteTags(noteId, cached, notePath, this.syncTagFor(front, back));
+        return { status: 'identical' };
       }
 
-      if (isIdentical) {
-        await this.ensureSourceTag(noteId, cached, notePath);
-        return { status: 'identical' };
+      // The stored fingerprint records the Front and Back the plugin last
+      // pushed. A different one means the note was edited directly in Anki.
+      if (this.isExternallyEdited(cached, front, back)) {
+        if (skipConflicts || !this.settings.overwriteAnkiEdits) {
+          // Skip the card and leave the note, its fields and its tag untouched.
+          return { status: 'conflict' };
+        }
       }
 
       await this.ankiConnectRequest('updateNoteFields', {
@@ -435,15 +452,38 @@ export class AnkiConnector {
           },
         },
       });
-      await this.ensureSourceTag(noteId, cached, notePath);
-      if (cached) {
-        if (cached.fields.Front) cached.fields.Front.value = card.question;
-        if (cached.fields.Back) cached.fields.Back.value = targetBack;
-      }
+      await this.ensureNoteTags(
+        noteId,
+        cached,
+        notePath,
+        this.syncTagFor(card.question, targetBack)
+      );
+      if (cached.fields.Front) cached.fields.Front.value = card.question;
+      if (cached.fields.Back) cached.fields.Back.value = targetBack;
       return { status: 'updated' };
     }
 
     return { status: 'missing' };
+  }
+
+  /** Fingerprint tag recording the Front and Back the plugin last pushed. */
+  private syncTagFor(front: string, back: string): string {
+    return `${SYNC_HASH_TAG_PREFIX}${stableHash(`${normalizeHtmlField(front)}\n${normalizeHtmlField(back)}`)}`;
+  }
+
+  /**
+   * True when a note carries a fingerprint that does not match its current
+   * fields. A note without a fingerprint predates edit detection, so it is not
+   * treated as edited; the next write records one.
+   */
+  private isExternallyEdited(
+    note: AnkiNoteInfo | NoteCacheEntry,
+    front: string,
+    back: string
+  ): boolean {
+    const tags = 'raw' in note ? note.raw.tags : note.tags;
+    const stored = tags?.find((tag) => tag.startsWith(SYNC_HASH_TAG_PREFIX));
+    return stored !== undefined && stored !== this.syncTagFor(front, back);
   }
 
   /**
@@ -474,21 +514,29 @@ export class AnkiConnector {
     return undefined;
   }
 
-  private async ensureSourceTag(
+  /**
+   * Makes the note carry the current source tag and exactly one fingerprint
+   * tag. The old fingerprint is replaced, never accumulated.
+   */
+  private async ensureNoteTags(
     noteId: string,
     cached: NoteCacheEntry,
-    notePath?: string
+    notePath: string | undefined,
+    syncTag: string
   ): Promise<void> {
-    if (!notePath) return;
-    const sourceTag = this.getSourceTag(notePath);
-    if (cached.raw.tags?.includes(sourceTag)) return;
+    const currentTags = cached.raw.tags ?? [];
+    const sourceTag = notePath ? this.getSourceTag(notePath) : undefined;
+    const withoutSyncTag = currentTags.filter((tag) => !tag.startsWith(SYNC_HASH_TAG_PREFIX));
+    const tags = [...new Set([...withoutSyncTag, ...(sourceTag ? [sourceTag] : []), syncTag])];
+    if (tags.length === currentTags.length && tags.every((tag, i) => tag === currentTags[i])) {
+      return;
+    }
 
-    const allTags = [...new Set([...(cached.raw.tags ?? []), sourceTag])];
     await this.ankiConnectRequest('updateNoteTags', {
       note: Number(noteId),
-      tags: allTags,
+      tags,
     });
-    cached.raw.tags = allTags;
+    cached.raw.tags = tags;
   }
 
   /**

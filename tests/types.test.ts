@@ -5,6 +5,7 @@ import {
   createSyncContext,
   describeSyncModalStatus,
   describeSyncResultNotice,
+  formatSyncCardResult,
 } from '../src/sync/types';
 
 describe('Types and Constants', () => {
@@ -19,6 +20,7 @@ describe('Types and Constants', () => {
       expect(DEFAULT_SETTINGS.useNoteBased).toBe(true);
       expect(DEFAULT_SETTINGS.boldQuestionInReadingMode).toBe(true);
       expect(DEFAULT_SETTINGS.syncOnSave).toBe(false);
+      expect(DEFAULT_SETTINGS.overwriteAnkiEdits).toBe(false);
     });
 
     it('has all required properties', () => {
@@ -32,6 +34,7 @@ describe('Types and Constants', () => {
       expect(DEFAULT_SETTINGS).toHaveProperty('useNoteBased');
       expect(DEFAULT_SETTINGS).toHaveProperty('boldQuestionInReadingMode');
       expect(DEFAULT_SETTINGS).toHaveProperty('syncOnSave');
+      expect(DEFAULT_SETTINGS).toHaveProperty('overwriteAnkiEdits');
       expect(DEFAULT_SETTINGS.pendingTagMigrations).toEqual([]);
     });
   });
@@ -121,6 +124,21 @@ describe('Types and Constants', () => {
           deletion: { deletedCount: 2, failed: false },
         })
       ).toBe('Sync completed: 1 succeeded, 0 skipped, 2 deleted');
+    });
+
+    it('counts cards skipped because they changed in Anki separately from other skips', () => {
+      expect(
+        describeSyncResultNotice({
+          cards: [
+            { card, status: 'added' },
+            { card, status: 'conflict', reason: 'changed in Anki' },
+            { card, status: 'skipped-identical' },
+          ],
+        })
+      ).toBe('Sync completed: 1 succeeded, 1 skipped, 1 changed in Anki');
+      expect(formatSyncCardResult({ card, status: 'conflict', deckName: 'Default' })).toBe(
+        'Skipped (changed in Anki): Q -> Default'
+      );
     });
   });
 });
