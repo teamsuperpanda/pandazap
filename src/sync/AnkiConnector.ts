@@ -1,4 +1,4 @@
-import { App, requestUrl } from 'obsidian';
+import { App, TFile, requestUrl } from 'obsidian';
 import {
   AnkiCard,
   PandaZapSettings,
@@ -835,8 +835,10 @@ export class AnkiConnector {
     let base64: string;
     if (typeof source === 'string') {
       base64 = await downloadImageToBase64(source);
-    } else {
+    } else if (source instanceof TFile) {
       base64 = await readImageFileToBase64(this.app, source);
+    } else {
+      return null;
     }
 
     const safeFilename = getStoredMediaFilenameForSource(source, notePath);

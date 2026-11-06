@@ -231,7 +231,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Obsidian:** Markdown-based knowledge base and note-taking application with a plugin ecosystem
 
-**AnkiCard:** Internal type representing a flashcard: `{question, answer, image?, line}`
+**AnkiCard:** Internal type representing a flashcard: `{question, answer, image?}`
 
 **SyncContext:** Frozen snapshot of extracted cards and note content at the start of a sync operation
 
