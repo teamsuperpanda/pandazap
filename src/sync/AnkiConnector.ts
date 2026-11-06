@@ -26,6 +26,7 @@ import {
 import { buildAnkiConnectUrl } from '../settings';
 import {
   parseCardsInfo,
+  parseDeckId,
   parseMediaName,
   parseNoteId,
   parseNoteIds,
@@ -285,11 +286,10 @@ export class AnkiConnector {
 
     if (this.settings.useNoteBased && notePath && cards.length > 0 && !isCancelled()) {
       try {
-        parseNullResult(
+        parseDeckId(
           await this.ankiConnectRequest('createDeck', {
             deck: deckName,
-          }),
-          'deck creation result'
+          })
         );
       } catch (e: unknown) {
         console.warn('PandaZap: deck creation error', e);

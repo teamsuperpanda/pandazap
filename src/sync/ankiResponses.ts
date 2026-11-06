@@ -44,6 +44,12 @@ export function parseStringArray(value: unknown, what: string): string[] {
   return [...value];
 }
 
+/** Deck ID, as returned by `createDeck`. */
+export function parseDeckId(value: unknown): number {
+  if (!isInteger(value)) throw invalid('deck ID');
+  return value;
+}
+
 /** Media filename, as returned by `storeMediaFile`. */
 export function parseMediaName(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) throw invalid('media filename');

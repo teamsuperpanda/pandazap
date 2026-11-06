@@ -189,7 +189,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
       if (action === 'addNote') return response(null);
       throw new Error(`Unexpected action: ${action}`);
@@ -214,7 +214,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'deleteNotes') return response(true);
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -287,7 +287,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as { action: string };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([11]);
       if (body.action === 'notesInfo') return response([note(11, 'Q', 'old', [otherTag])]);
       if (body.action === 'addNote') return response(22);
@@ -318,7 +318,7 @@ describe('AnkiConnector', () => {
         params?: { note?: { id?: string } };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([11, 22]);
       if (body.action === 'notesInfo') {
         return response([note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [sourceTag])]);
@@ -360,7 +360,7 @@ describe('AnkiConnector', () => {
         params?: { note?: number; tags?: string[] };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([42]);
       if (body.action === 'notesInfo') return response([note(42, 'Q', 'new', [legacyTag])]);
       if (body.action === 'updateNoteTags') {
@@ -435,7 +435,7 @@ describe('AnkiConnector', () => {
         params?: { note?: number; tags?: string[]; query?: string };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') {
         return response(body.params?.query?.includes(`tag:${sourceTag}`) ? [] : [42]);
       }
@@ -601,7 +601,7 @@ describe('AnkiConnector', () => {
         params?: { query?: string; notes?: string[] };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') return response([22]);
       if (body.action === 'notesInfo') return response([note(22, 'Q', 'A', [sourceTag])]);
       if (body.action === 'deleteNotes') {
@@ -629,7 +629,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'deleteNotes') return response(null, 'delete failed');
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -655,7 +655,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([11]);
       if (action === 'notesInfo') return response([note(11, 'Q', 'old', [sourceTag])]);
       if (action === 'updateNoteFields') return response(null, 'update failed');
@@ -683,7 +683,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       throw new Error(`Unexpected action: ${action}`);
     });
 
@@ -954,7 +954,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
       if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);
@@ -987,7 +987,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
       if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);
@@ -1018,7 +1018,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
       if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);

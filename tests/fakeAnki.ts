@@ -175,7 +175,7 @@ export function installFakeAnki(
         return ok(null);
       }
       case 'createDeck':
-        return ok(null);
+        return ok(1);
       case 'addNote': {
         const note = request.params?.note as
           | {
