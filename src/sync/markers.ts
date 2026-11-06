@@ -1,5 +1,5 @@
-import { DEFAULT_SETTINGS } from './types';
 import type { PandaZapSettings } from './types';
+import { markerLabels } from '../settings';
 
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,9 +22,7 @@ export interface MarkerRegexes {
 }
 
 export function buildMarkerRegexes(settings: PandaZapSettings): MarkerRegexes {
-  const qWord = (settings.questionWord || '').trim() || DEFAULT_SETTINGS.questionWord;
-  const aWord = (settings.answerWord || '').trim() || DEFAULT_SETTINGS.answerWord;
-  const iWord = (settings.imageWord || '').trim() || DEFAULT_SETTINGS.imageWord;
+  const { q: qWord, a: aWord, i: iWord } = markerLabels(settings);
   const escQ = escapeRegex(qWord);
   const escA = escapeRegex(aWord);
   const escI = escapeRegex(iWord);

@@ -2,6 +2,7 @@ import { App, MarkdownView, Notice } from 'obsidian';
 import { AnkiCard, PandaZapSettings } from './types';
 import { extractQACardsFromText } from './extractionUtils';
 import { buildMarkerRegexes } from './markers';
+import { markerLabels } from '../settings';
 import PandaZapPlugin from '../main';
 
 export class CardExtractor {
@@ -73,8 +74,9 @@ export class CardExtractor {
       let inQuestion = false;
 
       const s = plugin?.settings ?? this.settings;
-      const qLabelFull = `${(s.questionWord || '').trim() || 'Q'}:`;
-      const aLabelFull = `${(s.answerWord || '').trim() || 'A'}:`;
+      const labels = markerLabels(s);
+      const qLabelFull = `${labels.q}:`;
+      const aLabelFull = `${labels.a}:`;
 
       const applyTransform = (tn: Text) => {
         const parent = tn.parentNode;

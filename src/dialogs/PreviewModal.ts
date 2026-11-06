@@ -1,5 +1,6 @@
 import { Modal, App } from 'obsidian';
 import { SyncAnalysis, CardSyncInfo, PandaZapSettings } from '../sync/types';
+import { markerLabels } from '../settings';
 
 export class PreviewModal extends Modal {
   private syncAnalysis: SyncAnalysis;
@@ -74,6 +75,7 @@ export class PreviewModal extends Modal {
         cardsContainer.classList.add('expanded');
       }
     };
+    const labels = markerLabels(this.settings);
     cards.forEach((cardInfo, index) => {
       const cardElement = cardsContainer.createDiv(`panda-zap-card ${type}`);
 
@@ -92,13 +94,13 @@ export class PreviewModal extends Modal {
       const cardContent = cardElement.createDiv('panda-zap-card-content');
       const questionDiv = cardContent.createDiv('panda-zap-card-question');
       questionDiv.createSpan({
-        text: `${this.settings.questionWord}: `,
+        text: `${labels.q}: `,
         cls: 'panda-zap-card-label',
       });
       questionDiv.createSpan({ text: cardInfo.card.question, cls: 'panda-zap-card-text' });
       const answerDiv = cardContent.createDiv('panda-zap-card-answer');
       answerDiv.createSpan({
-        text: `${this.settings.answerWord}: `,
+        text: `${labels.a}: `,
         cls: 'panda-zap-card-label',
       });
       const answerText = cardInfo.card.answer || '(image only)';

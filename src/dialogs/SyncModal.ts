@@ -13,6 +13,7 @@ import {
 } from '../sync/types';
 import { ANKI_CONNECT_VERSION } from '../constants';
 import { PreviewModal } from './PreviewModal';
+import { markerLabels } from '../settings';
 
 // Interface to properly type the App's setting property
 interface AppWithSetting extends App {
@@ -338,8 +339,9 @@ export class SyncModal extends Modal {
 
   private async performSingleSync() {
     if (this.syncContext.cards.length === 0) {
-      const qTag = `${this.plugin.settings.questionWord}:`;
-      const aTag = `${this.plugin.settings.answerWord}:`;
+      const labels = markerLabels(this.plugin.settings);
+      const qTag = `${labels.q}:`;
+      const aTag = `${labels.a}:`;
       new Notice(`No ${qTag} ${aTag} cards found in current note`);
       return;
     }
