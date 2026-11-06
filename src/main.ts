@@ -13,8 +13,12 @@ import {
   BatchSyncContext,
   createSyncContext,
   createBatchSyncContext,
+  SyncResult,
+  AnkiConnectionState,
+  describeConnection,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
+import { ANKI_CONNECT_VERSION } from './constants';
 
 export default class PandaZapPlugin extends Plugin {
   settings: PandaZapSettings;
@@ -136,9 +140,13 @@ export default class PandaZapPlugin extends Plugin {
     return saveAttempt;
   }
 
-  async testAnkiConnection(): Promise<boolean> {
+  async testAnkiConnectionStatus(): Promise<AnkiConnectionState> {
     this.ankiConnector.updateSettings(this.settings);
     return this.ankiConnector.testConnection();
+  }
+
+  async testAnkiConnection(): Promise<boolean> {
+    return (await this.testAnkiConnectionStatus()).status === 'ok';
   }
 
   captureSyncContext(): SyncContext {
@@ -170,10 +178,9 @@ export default class PandaZapPlugin extends Plugin {
 
   async analyzeBatchSyncOperation(bContext: BatchSyncContext): Promise<SyncAnalysis> {
     this.ankiConnector.updateSettings(this.settings);
-    if (!(await this.ankiConnector.testConnection())) {
-      throw new Error(
-        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
-      );
+    const connection = await this.ankiConnector.testConnection();
+    if (connection.status !== 'ok') {
+      throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
     }
     const allCardsToAdd: CardSyncInfo[] = [];
     const allCardsToUpdate: CardSyncInfo[] = [];
@@ -213,17 +220,16 @@ export default class PandaZapPlugin extends Plugin {
     preview: boolean = false,
     deleteConfirmed: boolean = false,
     confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>
-  ): Promise<string[]> {
+  ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
-    if (!(await this.ankiConnector.testConnection())) {
-      throw new Error(
-        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
-      );
+    const connection = await this.ankiConnector.testConnection();
+    if (connection.status !== 'ok') {
+      throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
     }
-    const results: string[] = [];
+    const result: SyncResult = { cards: [] };
 
     for (const [notePath, context] of bContext.contexts) {
-      const noteResults = await this.ankiConnector.syncCards(
+      const noteResult = await this.ankiConnector.syncCards(
         context.cards,
         preview,
         notePath,
@@ -232,10 +238,19 @@ export default class PandaZapPlugin extends Plugin {
         confirmedDeletionIdsByNote?.get(notePath),
         true
       );
-      results.push(...noteResults);
+      result.cards.push(...noteResult.cards);
+      if (noteResult.deletion) {
+        const previous = result.deletion;
+        result.deletion = {
+          deletedCount: (previous?.deletedCount ?? 0) + noteResult.deletion.deletedCount,
+          failed: Boolean(previous?.failed) || noteResult.deletion.failed,
+          reason:
+            [previous?.reason, noteResult.deletion.reason].filter(Boolean).join('; ') || undefined,
+        };
+      }
     }
 
-    return results;
+    return result;
   }
 
   async analyzeSyncOperation(context?: SyncContext): Promise<SyncAnalysis> {
@@ -258,7 +273,7 @@ export default class PandaZapPlugin extends Plugin {
     deleteConfirmed: boolean = false,
     context?: SyncContext,
     confirmedDeletionIds?: readonly string[]
-  ): Promise<string[]> {
+  ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
     const syncContext = context ?? this.captureSyncContext();
     return this.ankiConnector.syncCards(
