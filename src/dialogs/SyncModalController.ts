@@ -114,6 +114,8 @@ export class SyncModalController {
   private readonly onSyncStart: (() => void) | undefined;
   private readonly now: () => number;
   private lastRender = 0;
+  /** True from the first sync request through confirmation and the run. */
+  private requestPending = false;
 
   constructor(options: SyncModalControllerOptions) {
     this.context = options.context;
@@ -147,11 +149,23 @@ export class SyncModalController {
   }
 
   get canPreview(): boolean {
-    return this.isConnected && this.analysis !== null && this.analysisError === null;
+    return (
+      this.isConnected &&
+      this.analysis !== null &&
+      this.analysisError === null &&
+      !this.requestPending
+    );
   }
 
   get canSync(): boolean {
-    return this.isConnected && this.analysisError === null && !this.isRunning;
+    const phaseAllowsAction = this.phase !== 'connecting' && this.phase !== 'analyzing';
+    return (
+      this.isConnected &&
+      this.analysisError === null &&
+      !this.isRunning &&
+      !this.requestPending &&
+      phaseAllowsAction
+    );
   }
 
   /** Tests the connection and, when it works, runs the analysis. */
@@ -200,10 +214,22 @@ export class SyncModalController {
    * to notices and decides what closing means for its mode.
    */
   async runSync(): Promise<SyncRunOutcome> {
-    if (this.isRunning) return { status: 'busy' };
+    if (this.isRunning || this.requestPending) return { status: 'busy' };
     if (!this.isConnected) return { status: 'unavailable', reason: 'connection' };
     if (this.analysisError) return { status: 'unavailable', reason: 'analysis' };
 
+    // Hold the request from before the deletion prompt: a second click must not
+    // open a second confirmation while the first is still unresolved.
+    this.requestPending = true;
+    try {
+      return await this.runSyncRequest();
+    } finally {
+      this.requestPending = false;
+      this.notify();
+    }
+  }
+
+  private async runSyncRequest(): Promise<SyncRunOutcome> {
     // The analysis can still be missing (a failed load is ignored on older
     // paths); load it so deletions can be prompted for.
     if (!this.analysis) {

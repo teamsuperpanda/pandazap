@@ -218,6 +218,36 @@ describe('SyncModalController deletion aggregation', () => {
     expect(outcome.status).toBe('completed');
   });
 
+  it('does not open a second deletion prompt while one is pending', async () => {
+    let resolveConfirm: ((confirmed: boolean) => void) | undefined;
+    const confirmDeletion = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConfirm = resolve;
+        })
+    );
+    const syncSingle = vi.fn().mockResolvedValue({ cards: [] });
+    const controller = createController({
+      operations: operations({
+        analyzeSingle: vi.fn().mockResolvedValue(analysis({ cardsToDelete: [deletion('11')] })),
+        syncSingle,
+      }),
+      confirmDeletion,
+    });
+
+    await controller.connect();
+    const firstRun = controller.runSync();
+    await vi.waitFor(() => expect(confirmDeletion).toHaveBeenCalledTimes(1));
+
+    expect(await controller.runSync()).toEqual({ status: 'busy' });
+    expect(confirmDeletion).toHaveBeenCalledTimes(1);
+    expect(controller.canSync).toBe(false);
+
+    resolveConfirm?.(true);
+    await firstRun;
+    expect(syncSingle).toHaveBeenCalledTimes(1);
+  });
+
   it('never starts a run when the deletion is not confirmed', async () => {
     const syncSingle = vi.fn().mockResolvedValue({ cards: [] });
     const controller = createController({
