@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_SETTINGS, CardAction, createSyncContext } from '../src/sync/types';
+import {
+  DEFAULT_SETTINGS,
+  CardAction,
+  createSyncContext,
+  describeSyncModalStatus,
+} from '../src/sync/types';
 
 describe('Types and Constants', () => {
   describe('DEFAULT_SETTINGS', () => {
@@ -32,6 +37,36 @@ describe('Types and Constants', () => {
       expect(CardAction.ADD).toBe('add');
       expect(CardAction.UPDATE).toBe('update');
       expect(CardAction.DELETE).toBe('delete');
+    });
+  });
+
+  describe('describeSyncModalStatus', () => {
+    it('keeps a successful connection separate from an analysis failure', () => {
+      const status = describeSyncModalStatus({ status: 'ok', version: 6 }, 'findNotes failed', 6);
+
+      expect(status.title).toBe('Connected to Anki');
+      expect(status.detail).toBeUndefined();
+      expect(status.analysisError).toBe('Analysis failed: findNotes failed');
+    });
+
+    it('reports no analysis failure when analysis succeeded', () => {
+      const status = describeSyncModalStatus({ status: 'ok', version: 6 }, null, 6);
+
+      expect(status.analysisError).toBeUndefined();
+    });
+
+    it('keeps distinct wording for unreachable, too old, and protocol errors', () => {
+      const unreachable = describeSyncModalStatus({ status: 'unreachable' }, null, 6);
+      expect(unreachable.title).toBe('Not connected to Anki');
+      expect(unreachable.detail).toContain('Cannot reach AnkiConnect');
+
+      const tooOld = describeSyncModalStatus({ status: 'version-too-old', version: 5 }, null, 6);
+      expect(tooOld.title).toBe('AnkiConnect is out of date');
+      expect(tooOld.detail).toContain('requires AnkiConnect 6 or newer');
+
+      const protocol = describeSyncModalStatus({ status: 'protocol-error' }, null, 6);
+      expect(protocol.title).toBe('Not connected to Anki');
+      expect(protocol.detail).toContain('unexpected response');
     });
   });
 

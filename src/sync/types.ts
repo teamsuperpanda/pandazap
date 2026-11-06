@@ -125,6 +125,40 @@ export function describeConnection(state: AnkiConnectionState, requiredVersion: 
   }
 }
 
+export interface SyncModalStatus {
+  /** Main connection status line. */
+  title: string;
+  /** Secondary connection detail, only when not connected. */
+  detail?: string;
+  /** Analysis failure line, rendered separately from the connection state. */
+  analysisError?: string;
+}
+
+/**
+ * Wording for the sync modal status block. Connection state and analysis
+ * failure are kept apart so a failed analysis never changes the connection
+ * diagnosis.
+ */
+export function describeSyncModalStatus(
+  connection: AnkiConnectionState,
+  analysisError: string | null,
+  requiredVersion: number
+): SyncModalStatus {
+  if (connection.status === 'ok') {
+    return {
+      title: 'Connected to Anki',
+      analysisError: analysisError ? `Analysis failed: ${analysisError}` : undefined,
+    };
+  }
+  return {
+    title:
+      connection.status === 'version-too-old'
+        ? 'AnkiConnect is out of date'
+        : 'Not connected to Anki',
+    detail: describeConnection(connection, requiredVersion),
+  };
+}
+
 /** Render one card result as a human-readable line. */
 export function formatSyncCardResult(result: SyncCardResult, settings?: PandaZapSettings): string {
   const { card, status, deckName, reason } = result;
