@@ -1,6 +1,7 @@
 import { PluginSettingTab, App, Setting, Notice, SettingDefinitionItem } from 'obsidian';
 import PandaZapPlugin from '../main';
-import { DEFAULT_SETTINGS } from '../sync/types';
+import { DEFAULT_SETTINGS, describeConnection } from '../sync/types';
+import { ANKI_CONNECT_VERSION } from '../constants';
 
 interface TextComponentWithInput {
   inputEl: HTMLInputElement;
@@ -254,39 +255,33 @@ export class PandaZapSettingTab extends PluginSettingTab {
     loadingEl.createSpan({ cls: 'connection-icon', text: 'loading' });
     loadingEl.createSpan({ cls: 'connection-text', text: 'Testing connection...' });
 
-    try {
-      const isConnected = await this.plugin.testAnkiConnection();
-      this.connectionResultEl.empty();
-      if (isConnected) {
-        this.connectionResultEl.className = 'panda-zap-connection-result connected';
-        const connectedEl = this.connectionResultEl.createDiv('connection-content');
-        connectedEl.createSpan({ cls: 'connection-text', text: 'Connected to Anki connect' });
-        connectedEl.createSpan({
-          cls: 'connection-details',
-          text: `${this.plugin.settings.ankiConnectUrl}:${this.plugin.settings.ankiConnectPort}`,
-        });
-      } else {
-        this.connectionResultEl.className = 'panda-zap-connection-result disconnected';
-        const disconnectedEl = this.connectionResultEl.createDiv('connection-content');
-        disconnectedEl.createSpan({ cls: 'connection-icon', text: 'disconnected' });
-        disconnectedEl.createSpan({
-          cls: 'connection-text',
-          text: 'Cannot connect to Anki connect',
-        });
-        disconnectedEl.createSpan({
-          cls: 'connection-details',
-          text: 'Make sure Anki is running with Anki connect addon installed',
-        });
-      }
-    } catch (error: unknown) {
-      this.connectionResultEl.empty();
-      this.connectionResultEl.className = 'panda-zap-connection-result error';
-      const errorEl = this.connectionResultEl.createDiv('connection-content');
-      errorEl.createSpan({ cls: 'connection-icon', text: 'error' });
-      errorEl.createSpan({ cls: 'connection-text', text: 'Connection error' });
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      errorEl.createSpan({ cls: 'connection-details', text: errorMsg });
+    const state = await this.plugin.testAnkiConnectionStatus();
+    this.connectionResultEl.empty();
+    if (state.status === 'ok') {
+      this.connectionResultEl.className = 'panda-zap-connection-result connected';
+      const connectedEl = this.connectionResultEl.createDiv('connection-content');
+      connectedEl.createSpan({
+        cls: 'connection-text',
+        text: describeConnection(state, ANKI_CONNECT_VERSION),
+      });
+      connectedEl.createSpan({
+        cls: 'connection-details',
+        text: `${this.plugin.settings.ankiConnectUrl}:${this.plugin.settings.ankiConnectPort}`,
+      });
+      return;
     }
+
+    const isProtocolIssue = state.status === 'version-too-old' || state.status === 'protocol-error';
+    this.connectionResultEl.className = `panda-zap-connection-result ${isProtocolIssue ? 'error' : 'disconnected'}`;
+    const resultEl = this.connectionResultEl.createDiv('connection-content');
+    resultEl.createSpan({
+      cls: 'connection-icon',
+      text: isProtocolIssue ? 'error' : 'disconnected',
+    });
+    resultEl.createSpan({
+      cls: 'connection-text',
+      text: describeConnection(state, ANKI_CONNECT_VERSION),
+    });
   }
 }
 

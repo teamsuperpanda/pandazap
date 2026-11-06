@@ -72,6 +72,133 @@ export interface SyncAnalysis {
   totalCards: number;
 }
 
+/** Outcome of processing one card during a sync run. */
+export type SyncCardStatus =
+  | 'added'
+  | 'updated'
+  | 'skipped-existing'
+  | 'skipped-identical'
+  | 'image-failed'
+  | 'failed'
+  | 'preview';
+
+export interface SyncCardResult {
+  card: AnkiCard;
+  status: SyncCardStatus;
+  /** Target deck, when the card was processed against one. */
+  deckName?: string;
+  /** Human-readable detail for failed or skipped outcomes. */
+  reason?: string;
+}
+
+export interface SyncDeletionResult {
+  deletedCount: number;
+  failed: boolean;
+  reason?: string;
+}
+
+/** Result of a sync run: one entry per card plus an optional deletion outcome. */
+export interface SyncResult {
+  cards: SyncCardResult[];
+  deletion?: SyncDeletionResult;
+}
+
+/** Connection state reported by AnkiConnect, including the version when known. */
+export type AnkiConnectionStatus = 'ok' | 'unreachable' | 'version-too-old' | 'protocol-error';
+
+export interface AnkiConnectionState {
+  status: AnkiConnectionStatus;
+  version?: number;
+}
+
+/** Single source of user-facing wording for every connection state. */
+export function describeConnection(state: AnkiConnectionState, requiredVersion: number): string {
+  switch (state.status) {
+    case 'ok':
+      return 'Connected to AnkiConnect';
+    case 'version-too-old':
+      return `AnkiConnect ${state.version ?? 'unknown'} is too old. Panda Zap requires AnkiConnect ${requiredVersion} or newer.`;
+    case 'protocol-error':
+      return 'AnkiConnect returned an unexpected response. Check the URL and port.';
+    case 'unreachable':
+      return 'Cannot reach AnkiConnect. Make sure Anki is running with the AnkiConnect addon installed.';
+  }
+}
+
+export interface SyncModalStatus {
+  /** Main connection status line. */
+  title: string;
+  /** Secondary connection detail, only when not connected. */
+  detail?: string;
+  /** Analysis failure line, rendered separately from the connection state. */
+  analysisError?: string;
+}
+
+/**
+ * Wording for the sync modal status block. Connection state and analysis
+ * failure are kept apart so a failed analysis never changes the connection
+ * diagnosis.
+ */
+export function describeSyncModalStatus(
+  connection: AnkiConnectionState,
+  analysisError: string | null,
+  requiredVersion: number
+): SyncModalStatus {
+  if (connection.status === 'ok') {
+    return {
+      title: 'Connected to Anki',
+      analysisError: analysisError ? `Analysis failed: ${analysisError}` : undefined,
+    };
+  }
+  return {
+    title:
+      connection.status === 'version-too-old'
+        ? 'AnkiConnect is out of date'
+        : 'Not connected to Anki',
+    detail: describeConnection(connection, requiredVersion),
+  };
+}
+
+/** Render one card result as a human-readable line. */
+export function formatSyncCardResult(result: SyncCardResult, settings?: PandaZapSettings): string {
+  const { card, status, deckName, reason } = result;
+  const target = deckName ? ` -> ${deckName}` : '';
+  switch (status) {
+    case 'added':
+      return `Added: ${card.question}${target}`;
+    case 'updated':
+      return `Updated: ${card.question}${target}`;
+    case 'skipped-existing':
+      return `Skipped (already exists): ${card.question}${target}`;
+    case 'skipped-identical':
+      return `Skipped (already up-to-date): ${card.question}${target}`;
+    case 'image-failed':
+      return `Image failed (${card.image}): ${reason ?? 'Unknown error'}`;
+    case 'failed':
+      return `Failed: ${card.question} - ${reason ?? 'Unknown error'}`;
+    case 'preview': {
+      const qWord = (settings?.questionWord || '').trim() || 'Q';
+      const aWord = (settings?.answerWord || '').trim() || 'A';
+      const imageInfo = card.image ? ` | Image: ${card.image}` : '';
+      const answerInfo = card.answer ? card.answer : '(image only)';
+      return `Preview: ${qWord}: ${card.question} | ${aWord}: ${answerInfo}${imageInfo} | Deck: ${deckName ?? ''}`;
+    }
+  }
+}
+
+/** Render a whole sync result as human-readable lines. */
+export function formatSyncResult(result: SyncResult, settings?: PandaZapSettings): string[] {
+  const lines = result.cards.map((card) => formatSyncCardResult(card, settings));
+  if (result.deletion) {
+    lines.push(
+      result.deletion.failed
+        ? `Failed to delete notes: ${result.deletion.reason ?? 'Unknown error'}`
+        : `Deleted ${result.deletion.deletedCount} notes from Anki`
+    );
+  }
+  return lines;
+}
+
 /** A point-in-time snapshot of the note used for one analysis/sync flow. */
 export interface SyncContext {
   readonly cards: readonly AnkiCard[];

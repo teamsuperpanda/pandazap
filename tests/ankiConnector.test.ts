@@ -10,7 +10,7 @@ vi.mock('obsidian', () => ({
 
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import { getStoredMediaFilename } from '../src/sync/imageUtils';
-import { DEFAULT_SETTINGS, type AnkiNoteInfo } from '../src/sync/types';
+import { DEFAULT_SETTINGS, formatSyncResult, type AnkiNoteInfo } from '../src/sync/types';
 
 const settings = { ...DEFAULT_SETTINGS, useNoteBased: true };
 const app = {} as ConstructorParameters<typeof AnkiConnector>[1];
@@ -38,20 +38,46 @@ function note(noteId: string, front: string, back: string, tags: string[]): Anki
 describe('AnkiConnector', () => {
   beforeEach(() => {
     requestUrl.mockReset();
+    vi.unstubAllGlobals();
   });
 
   it('requires a valid successful version response', async () => {
     requestUrl.mockResolvedValueOnce(response(6, null, 500));
-    expect(await new AnkiConnector(settings, app).testConnection()).toBe(false);
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'protocol-error',
+    });
 
     requestUrl.mockResolvedValueOnce({ status: 200, json: { value: 6 } });
-    expect(await new AnkiConnector(settings, app).testConnection()).toBe(false);
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'protocol-error',
+    });
 
     requestUrl.mockResolvedValueOnce(response('6'));
-    expect(await new AnkiConnector(settings, app).testConnection()).toBe(false);
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'protocol-error',
+    });
 
     requestUrl.mockResolvedValueOnce(response(6));
-    expect(await new AnkiConnector(settings, app).testConnection()).toBe(true);
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'ok',
+      version: 6,
+    });
+  });
+
+  it('reports an unreachable connection when the request fails at the network level', async () => {
+    vi.stubGlobal('window', { setTimeout: (callback: () => void) => callback() });
+    requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'unreachable',
+    });
+  });
+
+  it('reports an AnkiConnect version that is too old', async () => {
+    requestUrl.mockResolvedValueOnce(response(5));
+    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
+      status: 'version-too-old',
+      version: 5,
+    });
   });
 
   it('propagates lookup failures instead of classifying the card as missing', async () => {
@@ -90,7 +116,10 @@ describe('AnkiConnector', () => {
       'mine.md'
     );
 
-    expect(result).toEqual(['Added: Q -> mine']);
+    expect(result.cards).toEqual([
+      { card: { question: 'Q', answer: 'new', line: 1 }, status: 'added', deckName: 'mine' },
+    ]);
+    expect(formatSyncResult(result)).toEqual(['Added: Q -> mine']);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
   });
 
@@ -126,7 +155,10 @@ describe('AnkiConnector', () => {
       false,
       'mine.md'
     );
-    expect(result).toEqual(['Updated: Q -> mine']);
+    expect(result.cards).toEqual([
+      { card: { question: 'Q', answer: 'new', line: 1 }, status: 'updated', deckName: 'mine' },
+    ]);
+    expect(formatSyncResult(result)).toEqual(['Updated: Q -> mine']);
   });
 
   it('recognizes and migrates a legacy truncated source tag', async () => {
@@ -167,7 +199,8 @@ describe('AnkiConnector', () => {
       false,
       path
     );
-    expect(result[0]).toMatch(/^Skipped \(already up-to-date\): Q/);
+    expect(result.cards[0]).toMatchObject({ status: 'skipped-identical' });
+    expect(formatSyncResult(result)[0]).toMatch(/^Skipped \(already up-to-date\): Q/);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
   });
 
@@ -256,7 +289,14 @@ describe('AnkiConnector', () => {
       'Deck:: Shared\nQ: Q\nA: A'
     );
 
-    expect(result).toEqual(['Skipped (already up-to-date): Q -> Shared']);
+    expect(result.cards).toEqual([
+      {
+        card: { question: 'Q', answer: 'A', line: 2 },
+        status: 'skipped-identical',
+        deckName: 'Shared',
+      },
+    ]);
+    expect(formatSyncResult(result)).toEqual(['Skipped (already up-to-date): Q -> Shared']);
     expect(requestUrl.mock.calls.map(actionOf)).toContain('updateNoteTags');
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
   });
@@ -293,9 +333,32 @@ describe('AnkiConnector', () => {
       confirmedIds
     );
 
-    expect(result).toContain('Deleted 1 notes from Anki');
+    expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
+    expect(formatSyncResult(result)).toContain('Deleted 1 notes from Anki');
     expect(confirmedIds).toEqual(['11']);
     expect(requestUrl.mock.calls.filter((call) => actionOf(call) === 'findNotes')).toHaveLength(1);
+  });
+
+  it('reports a failed deletion instead of a silent success', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(null);
+      if (action === 'deleteNotes') return response(null, 'delete failed');
+      throw new Error(`Unexpected action: ${action}`);
+    });
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      [],
+      false,
+      'mine.md',
+      'Q: Q\nA: A',
+      true,
+      ['11']
+    );
+
+    expect(result.deletion).toEqual({ deletedCount: 0, failed: true, reason: 'delete failed' });
+    expect(formatSyncResult(result)).toEqual(['Failed to delete notes: delete failed']);
   });
 
   it('does not add after an update operation fails', async () => {
@@ -319,7 +382,14 @@ describe('AnkiConnector', () => {
       false,
       'mine.md'
     );
-    expect(result).toEqual(['Failed: Q - update failed']);
+    expect(result.cards).toEqual([
+      {
+        card: { question: 'Q', answer: 'new', line: 1 },
+        status: 'failed',
+        reason: 'update failed',
+      },
+    ]);
+    expect(formatSyncResult(result)).toEqual(['Failed: Q - update failed']);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('addNote');
   });
 
@@ -341,7 +411,14 @@ describe('AnkiConnector', () => {
       false,
       'mine.md'
     );
-    expect(result).toEqual(['Image failed (image.png): media failed']);
+    expect(result.cards).toEqual([
+      {
+        card: { question: 'Q', answer: 'A', image: 'image.png', line: 1 },
+        status: 'image-failed',
+        reason: 'media failed',
+      },
+    ]);
+    expect(formatSyncResult(result)).toEqual(['Image failed (image.png): media failed']);
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('addNote');
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
   });

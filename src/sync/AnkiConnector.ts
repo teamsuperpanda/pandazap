@@ -8,6 +8,10 @@ import {
   AnkiNoteInfo,
   AnkiConnectResponse,
   NoteCacheEntry,
+  AnkiConnectionState,
+  SyncCardResult,
+  SyncResult,
+  describeConnection,
 } from './types';
 import { ANKI_CONNECT_VERSION, PLUGIN_TAG, DEFAULT_TIMEOUT_MS } from '../constants';
 import { stableHash } from './hashUtils';
@@ -38,13 +42,16 @@ export class AnkiConnector {
     this.noteCache = null;
   }
 
-  async testConnection(): Promise<boolean> {
+  async testConnection(): Promise<AnkiConnectionState> {
     try {
-      const response = await this.ankiConnectRequest('version');
-      return typeof response === 'number' && response >= ANKI_CONNECT_VERSION;
+      const version = await this.ankiConnectRequest('version');
+      if (typeof version !== 'number') return { status: 'protocol-error' };
+      if (version < ANKI_CONNECT_VERSION) return { status: 'version-too-old', version };
+      return { status: 'ok', version };
     } catch (e: unknown) {
+      if (isNetworkError(e)) return { status: 'unreachable' };
       console.warn('PandaZap: connection test failed', e);
-      return false;
+      return { status: 'protocol-error' };
     }
   }
 
@@ -61,10 +68,11 @@ export class AnkiConnector {
       totalCards: cards.length,
     };
 
-    if (!skipConnectionTest && !(await this.testConnection())) {
-      throw new Error(
-        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
-      );
+    if (!skipConnectionTest) {
+      const connection = await this.testConnection();
+      if (connection.status !== 'ok') {
+        throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
+      }
     }
 
     const deckName = this.getDeckName(notePath, noteContent);
@@ -187,14 +195,15 @@ export class AnkiConnector {
     deleteConfirmed: boolean = false,
     confirmedDeletionIds?: readonly string[],
     skipConnectionTest: boolean = false
-  ): Promise<string[]> {
-    if (!skipConnectionTest && !(await this.testConnection())) {
-      throw new Error(
-        'Cannot connect to Anki Connect. Make sure Anki is running with AnkiConnect addon installed.'
-      );
+  ): Promise<SyncResult> {
+    if (!skipConnectionTest) {
+      const connection = await this.testConnection();
+      if (connection.status !== 'ok') {
+        throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
+      }
     }
 
-    const results: string[] = [];
+    const results: SyncCardResult[] = [];
     const deckName = this.getDeckName(notePath, noteContent);
     if (this.settings.useNoteBased && notePath && !preview) {
       try {
@@ -209,23 +218,14 @@ export class AnkiConnector {
     for (const card of cards) {
       try {
         if (!card.answer && !card.image) {
-          results.push(`Skipped invalid card (missing answer and image): ${card.question}`);
+          results.push({ card, status: 'failed', reason: 'missing answer and image' });
           continue;
         }
 
         if (preview) {
           const targetDeck =
             this.settings.useNoteBased && notePath ? deckName : this.settings.defaultDeck;
-          const qWord = (this.settings.questionWord || '').trim() || 'Q';
-          const aWord = (this.settings.answerWord || '').trim() || 'A';
-          const qTag = `${qWord}:`;
-          const aTag = `${aWord}:`;
-          const iInfo = card.image ? ` | Image: ${card.image}` : '';
-          const aInfo = card.answer ? `${card.answer}` : '(image only)';
-
-          results.push(
-            `Preview: ${qTag} ${card.question} | ${aTag} ${aInfo}${iInfo} | Deck: ${targetDeck}`
-          );
+          results.push({ card, status: 'preview', deckName: targetDeck });
         } else {
           let finalBack = card.answer;
           if (card.image && notePath) {
@@ -240,7 +240,7 @@ export class AnkiConnector {
               }
             } catch (e: unknown) {
               const msg = e instanceof Error ? e.message : 'Unknown error';
-              results.push(`Image failed (${card.image}): ${msg}`);
+              results.push({ card, status: 'image-failed', reason: msg });
               continue;
             }
           }
@@ -254,9 +254,9 @@ export class AnkiConnector {
           );
 
           if (updateStatus.status === 'updated') {
-            results.push(`Updated: ${card.question} -> ${deckName}`);
+            results.push({ card, status: 'updated', deckName });
           } else if (updateStatus.status === 'identical') {
-            results.push(`Skipped (already up-to-date): ${card.question} -> ${deckName}`);
+            results.push({ card, status: 'skipped-identical', deckName });
           } else {
             try {
               await this.ankiConnectRequest('addNote', {
@@ -274,11 +274,11 @@ export class AnkiConnector {
                   ],
                 },
               });
-              results.push(`Added: ${card.question} -> ${deckName}`);
+              results.push({ card, status: 'added', deckName });
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message.toLowerCase() : '';
               if (msg.includes('duplicate') || msg.includes('cannot create note')) {
-                results.push(`Skipped (already exists): ${card.question} -> ${deckName}`);
+                results.push({ card, status: 'skipped-existing', deckName });
               } else {
                 throw err;
               }
@@ -287,9 +287,11 @@ export class AnkiConnector {
         }
       } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
-        results.push(`Failed: ${card.question} - ${msg}`);
+        results.push({ card, status: 'failed', reason: msg });
       }
     }
+
+    const result: SyncResult = { cards: results };
 
     if (!preview && deleteConfirmed && this.settings.useNoteBased && notePath) {
       try {
@@ -302,15 +304,15 @@ export class AnkiConnector {
               .filter((id): id is string => Boolean(id));
         if (toDelete.length > 0) {
           await this.ankiConnectRequest('deleteNotes', { notes: toDelete });
-          results.push(`Deleted ${toDelete.length} notes from Anki`);
+          result.deletion = { deletedCount: toDelete.length, failed: false };
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        results.push(`Failed to delete notes: ${msg}`);
+        result.deletion = { deletedCount: 0, failed: true, reason: msg };
       }
     }
 
-    return results;
+    return result;
   }
 
   private async updateExistingCard(
@@ -612,12 +614,7 @@ export class AnkiConnector {
         }
         return data.result;
       } catch (error: unknown) {
-        const isNetwork =
-          error instanceof Error &&
-          (error.name === 'TypeError' ||
-            error.message === 'Failed to fetch' ||
-            error.message.includes('net::'));
-        const shouldRetry = isNetwork && attempt < MAX_RETRIES;
+        const shouldRetry = isNetworkError(error) && attempt < MAX_RETRIES;
         if (shouldRetry) {
           const backoff = DEFAULT_TIMEOUT_MS * 0.2 * Math.pow(2, attempt);
           await this.sleep(backoff + Math.random() * (DEFAULT_TIMEOUT_MS * 0.03));
@@ -627,6 +624,15 @@ export class AnkiConnector {
       }
     }
   }
+}
+
+function isNetworkError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'TypeError' ||
+      error.message === 'Failed to fetch' ||
+      error.message.includes('net::'))
+  );
 }
 
 function normalizeField(s: string): string {
