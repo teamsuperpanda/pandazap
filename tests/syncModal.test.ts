@@ -47,18 +47,20 @@ function analysis(overrides: Partial<SyncAnalysis> = {}): SyncAnalysis {
     cardsToAdd: [],
     cardsToUpdate: [],
     cardsToDelete: [],
+    cardsInConflict: [],
     totalCards: 0,
     ...overrides,
   };
 }
 
-function deletion(id: string, notePath?: string): CardSyncInfo {
+function deletion(id: string, notePath?: string, externallyEdited = false): CardSyncInfo {
   return {
     card: { question: 'Removed question', answer: 'Removed answer', line: -1 },
     action: CardAction.DELETE,
     deckName: 'Default',
     existingCardId: id,
     notePath,
+    externallyEdited,
   };
 }
 
@@ -99,7 +101,7 @@ describe('SyncModal deletion handling', () => {
 
     await modal.performSingleSync();
 
-    expect(confirm).toHaveBeenCalledWith(1);
+    expect(confirm).toHaveBeenCalledWith(1, undefined, 0);
     expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(
       false,
       true,
@@ -123,6 +125,21 @@ describe('SyncModal deletion handling', () => {
     expect(notices).toContain('No Q: A: cards found in current note');
     expect(close).toHaveBeenCalled();
     expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
+  });
+
+  it('flags externally edited cards in the deletion confirmation', async () => {
+    const context = createSyncContext([], 'mine.md', 'Nothing left here');
+    const plugin = pluginStub(
+      context,
+      analysis({ cardsToDelete: [deletion('11', undefined, true)] }),
+      analysis()
+    );
+    const modal = createModal(plugin);
+    const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
+
+    await modal.performSingleSync();
+
+    expect(confirm).toHaveBeenCalledWith(1, undefined, 1);
   });
 
   it('aborts without syncing when the deletion is not confirmed', async () => {
@@ -150,7 +167,7 @@ describe('SyncModal deletion handling', () => {
 
     await modal.performBatchSync(batchContext);
 
-    expect(confirm).toHaveBeenCalledWith(1, 1);
+    expect(confirm).toHaveBeenCalledWith(1, 1, 0);
     const [, , deleteConfirmed, idsByNote] = plugin.syncBatchCards.mock.calls[0] as [
       BatchSyncContext,
       boolean,

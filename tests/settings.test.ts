@@ -35,6 +35,7 @@ describe('normalizeSettings', () => {
         useNoteBased: false,
         boldQuestionInReadingMode: false,
         syncOnSave: true,
+        overwriteAnkiEdits: true,
       })
     ).toEqual({
       ankiConnectUrl: 'https://anki.local:9000',
@@ -48,6 +49,7 @@ describe('normalizeSettings', () => {
       useNoteBased: false,
       boldQuestionInReadingMode: false,
       syncOnSave: true,
+      overwriteAnkiEdits: true,
       pendingTagMigrations: [],
     });
   });
@@ -90,6 +92,19 @@ describe('normalizeSettings', () => {
   it('drops a sync on save value that is not a boolean', () => {
     for (const value of ['yes', 1, 0, null, {}, []]) {
       expect(normalizeSettings({ syncOnSave: value }).syncOnSave).toBe(false);
+    }
+  });
+
+  it('defaults overwriting Anki edits to off and round-trips the boolean', () => {
+    expect(DEFAULT_SETTINGS.overwriteAnkiEdits).toBe(false);
+    expect(normalizeSettings({}).overwriteAnkiEdits).toBe(false);
+    expect(normalizeSettings({ overwriteAnkiEdits: true }).overwriteAnkiEdits).toBe(true);
+    expect(normalizeSettings({ overwriteAnkiEdits: false }).overwriteAnkiEdits).toBe(false);
+  });
+
+  it('drops an overwrite Anki edits value that is not a boolean', () => {
+    for (const value of ['yes', 1, 0, null, {}, []]) {
+      expect(normalizeSettings({ overwriteAnkiEdits: value }).overwriteAnkiEdits).toBe(false);
     }
   });
 

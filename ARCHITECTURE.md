@@ -117,6 +117,8 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Description:** Each synced note gets an Anki tag like `source:folder_note_<7char_hash>` (FNV-1a hash of the vault file path, encoded as 7-char base-36). This scopes deletion and update detection to individual source files, allowing multiple notes targeting the same Anki deck without interference.
 
+**Anki edit detection:** Each note also carries exactly one `pandazap-sync:<7-character hash>` tag: a fingerprint of the `Front` and `Back` last pushed by the plugin. A sync recomputes the fingerprint from the note's current fields. A mismatch means the note was edited directly in Anki, so the card is skipped and reported as a conflict by default, or overwritten when `overwriteAnkiEdits` is on. Sync on save always skips these conflicts. Notes without a fingerprint (synced by an older version) update normally once and are tagged, so detection starts from that push. The tag is replaced on every content write, never accumulated.
+
 **Rename and move flow:** `main.ts` registers a `vault.on('rename')` listener for Markdown files. A rename is appended to `settings.pendingTagMigrations` and saved before Anki is contacted, then flushed at once, on plugin load, and before every sync entry point. A flush first migrates the notes carrying the unique hashed source tag of the old path, so the note's current cards always move. The legacy tag is searched only when the usual eligibility rule trusts it and only in the deck the old path targets; candidates carrying another path's hashed `source:` tag are ignored. The rest must prove ownership by a unique card `Front` match against the renamed note's content (read from the file at its new path). If any candidate cannot be proven, or a question appears on more than one, no legacy tag is touched, the entry is cleared, and a notice warns that older cards may remain in Anki as orphans. Read or request failures keep the entry queued and block only that note. Migrated notes get the new hashed tag via `updateNoteTags` while keeping their other tags, and their cards move when the deck derived from the old path differs from the deck derived from the new path plus its `Deck::` override. Only cards still in the old derived deck are moved, so a hand-moved card stays where the user put it. A sync whose own note still has a queued migration is blocked with a notice, while unrelated notes keep syncing.
 
 **Technologies:** FNV-1a hashing, base-36 encoding
@@ -152,7 +154,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Purpose:** Persists `PandaZapSettings` via Obsidian's `Plugin.loadData()` / `Plugin.saveData()` API.
 
-**Key fields:** `ankiConnectUrl`, `ankiConnectPort`, `defaultDeck`, `questionWord`, `answerWord`, `imageWord`, `deckOverrideWord`, `noteType`, `useNoteBased`, `boldQuestionInReadingMode`
+**Key fields:** `ankiConnectUrl`, `ankiConnectPort`, `defaultDeck`, `questionWord`, `answerWord`, `imageWord`, `deckOverrideWord`, `noteType`, `useNoteBased`, `boldQuestionInReadingMode`, `syncOnSave`, `overwriteAnkiEdits`, `pendingTagMigrations`
 
 ### 5.2. Anki Collection
 

@@ -24,6 +24,13 @@ Keep Anki running and reachable at this address while syncing.
   - When enabled, Panda Zap syncs a note about 2.5 seconds after you save it. Only notes that already have cards in Anki are touched, so a new note is never added silently.
   - Silent syncs never delete cards. Connection or sync failures appear in the status bar instead of a dialog, and clear on the next successful sync.
 
+- **Overwrite changes made in Anki**
+  - When enabled, syncing overwrites cards you changed directly in Anki. Off by default.
+  - Each synced note stores a `pandazap-sync:` tag with a fingerprint of the `Front` and `Back` last pushed by Panda Zap. When the note no longer matches that fingerprint, it was changed in Anki. With this setting off, Panda Zap skips that card, leaves its fields and tag alone, and reports it as changed in Anki in the preview and the completion summary. The note's other cards still sync.
+  - Sync on save always skips these cards, even when this setting is on. A silent sync never discards an edit you did not ask it to overwrite, and the status bar shows how many cards were left alone.
+  - Notes synced by an older version have no fingerprint tag yet. They update normally once and are tagged, so edit detection starts from that sync onward.
+  - If a card you removed from the note was changed in Anki, the deletion confirmation says how many cards in the delete set were edited in Anki before you confirm.
+
 ### Decking and targeting
 
 - **Default Deck**

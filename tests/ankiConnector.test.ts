@@ -197,6 +197,7 @@ describe('AnkiConnector', () => {
         expect(body.params?.note?.id).toBe('22');
         return response(null);
       }
+      if (body.action === 'updateNoteTags') return response(null);
       throw new Error(`Unexpected action: ${body.action}`);
     });
 
@@ -643,6 +644,7 @@ describe('AnkiConnector', () => {
         return response(query.includes(`tag:${sourceTag}`) ? [] : ['11']);
       }
       if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
+      if (request.action === 'updateNoteTags') return response(null);
       throw new Error(`Unexpected action: ${request.action}`);
     });
 

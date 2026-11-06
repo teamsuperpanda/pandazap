@@ -9,6 +9,7 @@ import {
   SyncAbortToken,
   SyncRunOptions,
   AnkiConnectionState,
+  CardSyncInfo,
   describeConnection,
   describeSyncModalStatus,
   describeSyncResultNotice,
@@ -178,6 +179,14 @@ export class SyncModal extends Modal {
       cls: 'panda-zap-pill-number',
     });
     updatePill.createSpan({ text: ' to update', cls: 'panda-zap-pill-label' });
+    if (this.syncAnalysis.cardsInConflict.length > 0) {
+      const conflictPill = pillsContainer.createDiv('panda-zap-pill conflict');
+      conflictPill.createSpan({
+        text: this.syncAnalysis.cardsInConflict.length.toString(),
+        cls: 'panda-zap-pill-number',
+      });
+      conflictPill.createSpan({ text: ' changed in Anki', cls: 'panda-zap-pill-label' });
+    }
     const deletePill = pillsContainer.createDiv('panda-zap-pill delete');
     deletePill.createSpan({
       text: this.syncAnalysis.cardsToDelete.length.toString(),
@@ -265,7 +274,11 @@ export class SyncModal extends Modal {
   }
 
   // Show a styled Obsidian modal to confirm deletion, returns true if user confirms
-  private showDeleteConfirmation(count: number, noteCount?: number): Promise<boolean> {
+  private showDeleteConfirmation(
+    count: number,
+    noteCount?: number,
+    editedCount = 0
+  ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const m = new Modal(this.app);
       let settled = false;
@@ -279,10 +292,16 @@ export class SyncModal extends Modal {
       m.contentEl.addClass('panda-zap-delete-confirm');
       m.contentEl.createEl('h3', { text: 'Confirm deletion' });
       const msg = m.contentEl.createDiv('panda-zap-delete-msg');
-      msg.textContent =
+      const baseMessage =
         noteCount && noteCount > 1
-          ? `This will delete ${count} cards from ${noteCount} notes that were removed from your notes. Proceed?`
-          : `This will delete ${count} cards from Anki that were removed from this note. Proceed?`;
+          ? `This will delete ${count} cards from ${noteCount} notes that were removed from your notes.`
+          : `This will delete ${count} cards from Anki that were removed from this note.`;
+      // Never delete an Anki edit without saying that it is in the delete set.
+      const editedNote =
+        editedCount > 0
+          ? ` ${editedCount} of these cards were changed in Anki and will be deleted.`
+          : '';
+      msg.textContent = `${baseMessage}${editedNote} Proceed?`;
       const btnRow = m.contentEl.createDiv('panda-zap-button-row');
 
       const cancel = btnRow.createEl('button', {
@@ -388,7 +407,9 @@ export class SyncModal extends Modal {
     let confirmedDeletionIds: readonly string[] | undefined;
     if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
       const userConfirmed = await this.showDeleteConfirmation(
-        this.syncAnalysis.cardsToDelete.length
+        this.syncAnalysis.cardsToDelete.length,
+        undefined,
+        countExternallyEdited(this.syncAnalysis.cardsToDelete)
       );
       if (!userConfirmed) {
         // User cancelled deletion -> close modal and abort sync
@@ -443,7 +464,8 @@ export class SyncModal extends Modal {
       ).size;
       const userConfirmed = await this.showDeleteConfirmation(
         this.syncAnalysis.cardsToDelete.length,
-        noteCount
+        noteCount,
+        countExternallyEdited(this.syncAnalysis.cardsToDelete)
       );
       if (!userConfirmed) {
         this.close();
@@ -554,7 +576,10 @@ export class SyncModal extends Modal {
     const resultsList = finalResultContainer.createDiv('panda-zap-results-list');
     // Separate skipped entries from main results and render skipped in a collapsible section
     const skipped = result.cards.filter(
-      (card) => card.status === 'skipped-existing' || card.status === 'skipped-identical'
+      (card) =>
+        card.status === 'skipped-existing' ||
+        card.status === 'skipped-identical' ||
+        card.status === 'conflict'
     );
     const skippedSet = new Set(skipped);
     result.cards
@@ -655,4 +680,9 @@ export class SyncModal extends Modal {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
+}
+
+/** Deletion candidates whose Anki note changed outside the plugin. */
+function countExternallyEdited(cards: readonly CardSyncInfo[]): number {
+  return cards.filter((card) => card.externallyEdited).length;
 }

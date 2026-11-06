@@ -426,10 +426,15 @@ export default class PandaZapPlugin extends Plugin {
 
     const cardCount = [...byNote.values()].reduce((sum, ids) => sum + ids.length, 0);
     const affected = [...byNote.keys()];
+    const editedCount = analysis.cardsToDelete.filter((card) => card.externallyEdited).length;
+    const editedNote =
+      editedCount > 0
+        ? ` ${editedCount} of these cards were changed in Anki and will be deleted.`
+        : '';
     const message =
       affected.length === 1
-        ? `This will delete ${cardCount} cards from Anki that were removed from "${noteName(affected[0])}". Proceed?`
-        : `This will delete ${cardCount} cards from ${affected.length} notes that were removed from your notes. Proceed?`;
+        ? `This will delete ${cardCount} cards from Anki that were removed from "${noteName(affected[0])}".${editedNote} Proceed?`
+        : `This will delete ${cardCount} cards from ${affected.length} notes that were removed from your notes.${editedNote} Proceed?`;
     const items =
       affected.length > 1
         ? affected.map((notePath) => `${noteName(notePath)} (${byNote.get(notePath)?.length ?? 0})`)
@@ -558,7 +563,9 @@ export default class PandaZapPlugin extends Plugin {
         false,
         [],
         false,
-        { abort }
+        // Silent sync never overwrites an edit made in Anki, even when the
+        // setting allows a manual sync to do so.
+        { abort, skipConflicts: true }
       );
       if (this.unloaded || !this.settings.syncOnSave) return;
       const failed = result.cards.filter(
@@ -570,6 +577,14 @@ export default class PandaZapPlugin extends Plugin {
       // The note now has cards for certain, so the cached answer is stale.
       this.noteHasCardsCache.delete(notePath);
       this.clearSyncStatusError();
+      const changedInAnki = result.cards.filter((card) => card.status === 'conflict').length;
+      if (changedInAnki > 0) {
+        this.setSyncStatus(
+          `Panda Zap: ${changedInAnki} changed in Anki`,
+          `${changedInAnki} ${plural(changedInAnki, 'card')} for ${notePath} changed in Anki and were left alone`
+        );
+        return;
+      }
       this.setSyncStatus('Panda Zap: idle', 'Sync on save is active');
     } finally {
       this.silentSyncAborts.delete(notePath);
@@ -951,6 +966,7 @@ export default class PandaZapPlugin extends Plugin {
     const allCardsToAdd: CardSyncInfo[] = [];
     const allCardsToUpdate: CardSyncInfo[] = [];
     const allCardsToDelete: CardSyncInfo[] = [];
+    const allCardsInConflict: CardSyncInfo[] = [];
     let totalCards = 0;
 
     for (const [notePath, context] of bContext.contexts) {
@@ -968,15 +984,18 @@ export default class PandaZapPlugin extends Plugin {
       tag(analysis.cardsToAdd);
       tag(analysis.cardsToUpdate);
       tag(analysis.cardsToDelete);
+      tag(analysis.cardsInConflict);
       allCardsToAdd.push(...analysis.cardsToAdd);
       allCardsToUpdate.push(...analysis.cardsToUpdate);
       allCardsToDelete.push(...analysis.cardsToDelete);
+      allCardsInConflict.push(...analysis.cardsInConflict);
     }
 
     return {
       cardsToAdd: allCardsToAdd,
       cardsToUpdate: allCardsToUpdate,
       cardsToDelete: allCardsToDelete,
+      cardsInConflict: allCardsInConflict,
       totalCards,
     };
   }
