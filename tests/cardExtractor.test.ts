@@ -1,50 +1,98 @@
-import { describe, it, expect } from 'vitest';
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-describe('CardExtractor (unit tests)', () => {
-  // Note: CardExtractor tests that depend on Obsidian API are skipped in unit tests
-  // These would be better suited for integration tests with proper Obsidian environment
+vi.mock('obsidian', () => ({}));
+vi.mock('../src/main', () => ({ default: class {} }));
 
-  it('should be tested in integration environment', () => {
-    // This test serves as a placeholder to remind us that CardExtractor
-    // needs integration testing with the actual Obsidian environment
-    expect(true).toBe(true);
+import { CardExtractor } from '../src/sync/CardExtractor';
+import { DEFAULT_SETTINGS, type PandaZapSettings } from '../src/sync/types';
+import { installObsidianDom } from './obsidianDom';
+
+function settings(overrides: Partial<PandaZapSettings> = {}): PandaZapSettings {
+  return { ...DEFAULT_SETTINGS, boldQuestionInReadingMode: true, ...overrides };
+}
+
+function process(markup: string, overrides: Partial<PandaZapSettings> = {}) {
+  const parsed = new DOMParser().parseFromString(markup, 'text/html');
+  const root = document.createElement('div');
+  for (const child of Array.from(parsed.body.childNodes)) {
+    root.appendChild(document.importNode(child, true));
+  }
+  new CardExtractor().processQACards(root, { settings: settings(overrides) } as never);
+  return root;
+}
+
+function paragraph(root: HTMLElement): HTMLElement {
+  const el = root.querySelector('p');
+  if (!el) throw new Error('expected a paragraph');
+  return el;
+}
+
+describe('CardExtractor.processQACards', () => {
+  beforeEach(() => {
+    installObsidianDom();
   });
 
-  describe('DOM processing logic (extracted)', () => {
-    it('processes Q&A text patterns correctly', () => {
-      // Test the regex patterns that would be used by CardExtractor
-      const qTag = 'Q';
-      const aTag = 'A';
-      const iTag = 'I';
-      const escQ = qTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escA = aTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escI = iTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
+  it('marks a container with Q and A markers as processed', () => {
+    const root = process('<p>Q: What is TypeScript? A: A typed superset of JavaScript</p>');
 
-      const testText = 'Q: What is TypeScript? I: ts-logo.png A: A typed superset of JavaScript';
+    expect(paragraph(root).classList.contains('panda-zap-qa-processed')).toBe(true);
+  });
 
-      expect(new RegExp(`[*_]{0,2}${escQ}`).test(testText)).toBe(true);
-      expect(new RegExp(`[*_]{0,2}${escA}`).test(testText)).toBe(true);
-      expect(new RegExp(`[*_]{0,2}${escI}`).test(testText)).toBe(true);
+  it('treats the I marker as a card marker too', () => {
+    const root = process('<p>Q: What is this? I: diagram.png A: A diagram</p>');
+
+    expect(paragraph(root).classList.contains('panda-zap-qa-processed')).toBe(true);
+  });
+
+  it('bolds the question when boldQuestionInReadingMode is on', () => {
+    const root = process('<p>Q: What is TypeScript? A: A typed superset</p>');
+
+    const strong = paragraph(root).querySelector('strong');
+    expect(strong?.textContent?.trim()).toBe('What is TypeScript?');
+    expect(paragraph(root).textContent).not.toContain('Q:');
+  });
+
+  it('leaves the question unbolded when the setting is off', () => {
+    const root = process('<p>Q: What is TypeScript? A: A typed superset</p>', {
+      boldQuestionInReadingMode: false,
     });
 
-    it('matches Q, A and I tags correctly with alternation', () => {
-      const qTag = 'Q';
-      const aTag = 'A';
-      const iTag = 'I';
-      const escQ = qTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escA = aTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
-      const escI = iTag.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':';
+    expect(paragraph(root).querySelector('strong')).toBeNull();
+    expect(paragraph(root).classList.contains('panda-zap-qa-processed')).toBe(true);
+  });
 
-      const parts = [`([*_]{0,2})${escQ}\\s*`, `([*_]{0,2})${escA}\\s*`, `([*_]{0,2})${escI}\\s*`];
-      const regex = new RegExp(parts.join('|'), 'gi');
+  it('skips containers already marked panda-zap-qa-processed', () => {
+    const root = process('<p class="panda-zap-qa-processed">Q: Already A: Done</p>');
 
-      const text = 'Q: Test I: Image A: Ans';
-      const matches = text.match(regex);
-      expect(matches).not.toBeNull();
-      expect(matches.length).toBe(3);
-      expect(matches[0].trim()).toBe('Q:');
-      expect(matches[1].trim()).toBe('I:');
-      expect(matches[2].trim()).toBe('A:');
-    });
+    const p = paragraph(root);
+    expect(p.querySelector('strong')).toBeNull();
+    expect(p.textContent).toBe('Q: Already A: Done');
+  });
+
+  it('never rewrites text inside code or pre', () => {
+    const root = process(
+      '<p>Q: Question <code>Q: not a question A: not an answer</code> A: Answer</p>'
+    );
+
+    expect(paragraph(root).querySelector('code')?.textContent).toBe(
+      'Q: not a question A: not an answer'
+    );
+    expect(paragraph(root).querySelector('code strong')).toBeNull();
+  });
+
+  it('leaves a pre block holding markers untouched', () => {
+    const root = process('<p>Q: Question A: Answer</p><pre>Q: raw A: raw</pre>');
+
+    expect(root.querySelector('pre')?.textContent).toBe('Q: raw A: raw');
+    expect(root.querySelector('pre strong')).toBeNull();
+  });
+
+  it('leaves containers without markers untouched', () => {
+    const root = process('<p>Just a plain paragraph with no markers</p>');
+
+    const p = paragraph(root);
+    expect(p.classList.contains('panda-zap-qa-processed')).toBe(false);
+    expect(p.textContent).toBe('Just a plain paragraph with no markers');
   });
 });
