@@ -351,6 +351,128 @@ describe('AnkiConnector', () => {
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
   });
 
+  it('adds a note for a second source that shares a question in the default deck', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const otherTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
+      'other.md'
+    );
+
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'notesInfo') return response([note('11', 'Q', 'first', [otherTag])]);
+      if (request.action === 'addNote') return response('22');
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const result = await connector.syncCards(
+      [{ question: 'Q', answer: 'second', line: 1 }],
+      false,
+      'mine.md'
+    );
+
+    expect(result.cards).toEqual([
+      { card: { question: 'Q', answer: 'second', line: 1 }, status: 'added', deckName: 'Default' },
+    ]);
+    expect(requests('addNote')).toHaveLength(1);
+    expect(requestUrl.mock.calls.map(actionOf)).not.toContain('updateNoteFields');
+  });
+
+  it('deletes only the default-deck notes owned by the synced note', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const tags = connector as unknown as { getSourceTag(path: string): string };
+    const mineTag = tags.getSourceTag('mine.md');
+    const otherTag = tags.getSourceTag('other.md');
+
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') {
+        const query = String(request.params?.query);
+        return response(query.includes(`tag:${mineTag}`) ? ['11'] : ['11', '22']);
+      }
+      if (request.action === 'notesInfo') {
+        return response([
+          note('11', 'Removed', 'answer', [mineTag]),
+          note('22', 'Kept', 'answer', [otherTag]),
+        ]);
+      }
+      if (request.action === 'deleteNotes') return response(null);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const analysis = await connector.analyzeSyncOperation(
+      [{ question: 'Kept', answer: 'answer', line: 1 }],
+      'mine.md'
+    );
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+    expect(requests('findNotes').map((request) => request.params?.query)).toContain(
+      `deck:"Default" tag:panda-zap tag:${mineTag}`
+    );
+
+    const result = await connector.syncCards([], false, 'mine.md', undefined, true, ['11']);
+    expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
+    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
+  });
+
+  it('finds an emptied note by exact source tag after its deck override was removed', async () => {
+    const connector = new AnkiConnector(settings, app);
+    const tags = connector as unknown as {
+      getSourceTag(path: string): string;
+      getLegacySourceTag(path: string): string;
+    };
+    const sourceTag = tags.getSourceTag('mine.md');
+    expect(tags.getLegacySourceTag('mine.md')).not.toBe(sourceTag);
+
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'notesInfo') {
+        return response([note('11', 'Removed', 'answer', [sourceTag])]);
+      }
+      if (request.action === 'deleteNotes') return response(null);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    // The note was synced in a note-based deck earlier; its Deck:: line is gone.
+    const analysis = await connector.analyzeSyncOperation([], 'mine.md', 'Nothing left here');
+    const queries = requests('findNotes').map((request) => String(request.params?.query));
+    // One exact-tag lookup: no deck filter and no shared legacy tag.
+    expect(queries).toEqual([`tag:panda-zap tag:${sourceTag}`]);
+    expect(queries.join(' ')).not.toContain('deck:');
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+
+    const result = await connector.syncCards([], false, 'mine.md', 'Nothing left here', true, [
+      '11',
+    ]);
+    expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
+    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
+    // A deletion-only sync must not leave an empty deck behind.
+    expect(requestUrl.mock.calls.map(actionOf)).not.toContain('createDeck');
+  });
+
+  it('does not re-analyse deletions when the confirmed ID list is empty', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      [],
+      false,
+      'mine.md',
+      'Nothing left here',
+      true,
+      []
+    );
+
+    expect(result.deletion).toBeUndefined();
+    expect(requestUrl.mock.calls.map(actionOf)).toEqual(['version']);
+  });
+
   it('deletes exactly the immutable IDs supplied from confirmation', async () => {
     const connector = new AnkiConnector(settings, app);
     const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
@@ -514,7 +636,12 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
-      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'findNotes') {
+        // The source-scoped deletion lookup sees nothing to delete here, so the
+        // deck cache stays the only notesInfo lookup.
+        const query = String(request.params?.query);
+        return response(query.includes(`tag:${sourceTag}`) ? [] : ['11']);
+      }
       if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
       throw new Error(`Unexpected action: ${request.action}`);
     });

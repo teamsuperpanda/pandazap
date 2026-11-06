@@ -174,7 +174,7 @@ By default, cards go to a deck named after your note's folder and filename. You 
 | -------- | ------ | ------- |
 | 1 | First-line override | `Deck::Biology/Plants` on the very first line |
 | 2 | Folder-based (if enabled) | `Biology/Plants/Photosynthesis.md` becomes deck `Biology/Plants::Photosynthesis` |
-| 3 | Default deck | The `defaultDeck` value in the plugin's `data.json` (default: `Default`) |
+| 3 | Default deck | The **Default deck** setting in the plugin settings (default: `Default`) |
 
 ### Deck override on first line
 

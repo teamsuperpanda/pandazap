@@ -338,14 +338,6 @@ export class SyncModal extends Modal {
   }
 
   private async performSingleSync() {
-    if (this.syncContext.cards.length === 0) {
-      const labels = markerLabels(this.plugin.settings);
-      const qTag = `${labels.q}:`;
-      const aTag = `${labels.a}:`;
-      new Notice(`No ${qTag} ${aTag} cards found in current note`);
-      return;
-    }
-
     // If we don't have analysis loaded, try to load it so we can prompt for deletions
     if (!this.syncAnalysis) {
       try {
@@ -353,6 +345,19 @@ export class SyncModal extends Modal {
       } catch {
         // ignore analysis failure, proceed without deletion prompt
       }
+    }
+
+    const hasCards = this.syncContext.cards.length > 0;
+    const deletionCount = this.syncAnalysis?.cardsToDelete.length ?? 0;
+    // An emptied note has no cards left to add but may still have Anki notes to
+    // remove, so the deletion count decides whether there is anything to do.
+    if (!hasCards && deletionCount === 0) {
+      const labels = markerLabels(this.plugin.settings);
+      const qTag = `${labels.q}:`;
+      const aTag = `${labels.a}:`;
+      new Notice(`No ${qTag} ${aTag} cards found in current note`);
+      this.close();
+      return;
     }
 
     // If there are deletions detected, ask the user to confirm before proceeding.
@@ -382,11 +387,6 @@ export class SyncModal extends Modal {
   }
 
   private async performBatchSync(bContext: BatchSyncContext) {
-    if (bContext.totalCards === 0) {
-      new Notice('No cards found in selected notes');
-      return;
-    }
-
     // If we don't have analysis loaded, try to load it
     if (!this.syncAnalysis) {
       try {
@@ -394,6 +394,14 @@ export class SyncModal extends Modal {
       } catch {
         // ignore
       }
+    }
+
+    const deletionCount = this.syncAnalysis?.cardsToDelete.length ?? 0;
+    // Selected notes stay in the batch even when they have no cards left, so an
+    // emptied note can still remove the notes it previously synced.
+    if (bContext.totalCards === 0 && deletionCount === 0) {
+      new Notice('No cards found in selected notes');
+      return;
     }
 
     // Handle deletions per-note

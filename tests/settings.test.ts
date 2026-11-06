@@ -6,6 +6,7 @@ import {
   normalizeSettings,
   parseAnkiConnectUrl,
   parsePort,
+  validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
 } from '../src/settings';
@@ -138,6 +139,16 @@ describe('normalizeSettings', () => {
     expect(settings.imageWord).toBe(DEFAULT_SETTINGS.imageWord);
   });
 
+  it('falls back for a default deck that breaks the deck query', () => {
+    expect(normalizeSettings({ defaultDeck: ' Languages ' }).defaultDeck).toBe('Languages');
+    expect(normalizeSettings({ defaultDeck: 'Deck\nOther' }).defaultDeck).toBe(
+      DEFAULT_SETTINGS.defaultDeck
+    );
+    expect(normalizeSettings({ defaultDeck: 'Deck\r\nOther' }).defaultDeck).toBe(
+      DEFAULT_SETTINGS.defaultDeck
+    );
+  });
+
   it('falls back for empty note type and default deck', () => {
     const settings = normalizeSettings({ noteType: '  ', defaultDeck: '' });
     expect(settings.noteType).toBe(DEFAULT_SETTINGS.noteType);
@@ -248,6 +259,20 @@ describe('validateDeckOverrideWord', () => {
     expect(validateDeckOverrideWord('')).not.toBeNull();
     expect(validateDeckOverrideWord('   ')).not.toBeNull();
     expect(validateDeckOverrideWord('Deck\r\nOther')).not.toBeNull();
+  });
+});
+
+describe('validateDeckName', () => {
+  it('allows nested deck names and other text', () => {
+    for (const name of ['Default', 'Languages::Spanish', 'My Deck']) {
+      expect(validateDeckName(name), name).toBeNull();
+    }
+  });
+
+  it('rejects empty and multi-line values', () => {
+    expect(validateDeckName('')).not.toBeNull();
+    expect(validateDeckName('   ')).not.toBeNull();
+    expect(validateDeckName('Deck\r\nOther')).not.toBeNull();
   });
 });
 

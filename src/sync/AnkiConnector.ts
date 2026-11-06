@@ -154,7 +154,9 @@ export class AnkiConnector {
       }
     }
 
-    if (this.settings.useNoteBased && notePath) {
+    // Deletion is scoped by the plugin tag and the note's source tag, so it
+    // applies to the shared default deck as well as to note-based decks.
+    if (notePath) {
       const extractedQuestions = new Set(cards.map((c) => normalizeField(c.question || '')));
 
       const findNotes = async (query: string): Promise<string[]> => {
@@ -165,10 +167,20 @@ export class AnkiConnector {
         return existingNoteIds;
       };
 
-      const sourceTags = this.getEligibleSourceTags(notePath, deckName, noteContent);
+      const sourceTags =
+        cards.length === 0
+          ? [this.getSourceTag(notePath)]
+          : this.getEligibleSourceTags(notePath, deckName, noteContent);
       const noteIds = new Set<string>();
       for (const sourceTag of sourceTags) {
-        const query = `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
+        // An emptied note may have lost its `Deck::` line or had the default deck
+        // changed, so a deck filter would hide the notes it still owns. Its exact
+        // source tag is unique per note and safe to match across decks; the
+        // legacy tag can be shared, so it stays out of this path.
+        const query =
+          cards.length === 0
+            ? `tag:${PLUGIN_TAG} tag:${sourceTag}`
+            : `deck:"${deckName}" tag:${PLUGIN_TAG} tag:${sourceTag}`;
         for (const noteId of await findNotes(query)) noteIds.add(noteId);
       }
 
@@ -231,7 +243,7 @@ export class AnkiConnector {
 
     const results: SyncCardResult[] = [];
     const deckName = this.getDeckName(notePath, noteContent);
-    if (this.settings.useNoteBased && notePath && !preview) {
+    if (this.settings.useNoteBased && notePath && !preview && cards.length > 0) {
       try {
         await this.ankiConnectRequest('createDeck', {
           deck: deckName,
@@ -319,7 +331,7 @@ export class AnkiConnector {
 
     const result: SyncResult = { cards: results };
 
-    if (!preview && deleteConfirmed && this.settings.useNoteBased && notePath) {
+    if (!preview && deleteConfirmed && notePath) {
       try {
         const toDelete = confirmedDeletionIds
           ? [...new Set(confirmedDeletionIds.filter(Boolean))]
@@ -396,6 +408,11 @@ export class AnkiConnector {
     return { status: 'missing' };
   }
 
+  /**
+   * Picks the cached note that belongs to the source note. The Front field alone
+   * is not unique: several notes can share a question, in note-based decks and
+   * especially in one shared default deck, so ownership is decided by source tag.
+   */
   private selectCacheEntry(
     card: AnkiCard,
     notePath?: string,
@@ -405,19 +422,18 @@ export class AnkiConnector {
     const entries = this.noteCache?.byFront.get(normalizeField(card.question || ''));
     if (!entries?.length) return undefined;
 
-    if (notePath) {
-      const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
-      const exact = entries.find((entry) => entry.raw.tags?.includes(sourceTag));
-      if (exact) return exact;
-      if (this.canUseLegacySourceTag(notePath, deckName, noteContent)) {
-        const legacy = entries.find((entry) => entry.raw.tags?.includes(legacySourceTag));
-        if (legacy) return legacy;
-      }
-      if (this.settings.useNoteBased) return undefined;
-    }
+    // Without a source note there is no ownership to match, so never claim a
+    // note that may belong to another source.
+    if (!notePath) return undefined;
 
-    if (this.settings.useNoteBased) return undefined;
-    return entries[0];
+    const [sourceTag, legacySourceTag] = this.getSourceTags(notePath);
+    const exact = entries.find((entry) => entry.raw.tags?.includes(sourceTag));
+    if (exact) return exact;
+    if (this.canUseLegacySourceTag(notePath, deckName, noteContent)) {
+      const legacy = entries.find((entry) => entry.raw.tags?.includes(legacySourceTag));
+      if (legacy) return legacy;
+    }
+    return undefined;
   }
 
   private async ensureSourceTag(

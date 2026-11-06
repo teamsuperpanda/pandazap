@@ -64,6 +64,30 @@ describe('settings persistence', () => {
     expect(saveData).toHaveBeenCalledWith(DEFAULT_SETTINGS);
   });
 
+  it('persists a changed default deck through the normal save path', async () => {
+    saveData.mockReset();
+    saveData.mockResolvedValue(undefined);
+    const plugin = createPlugin();
+    plugin.settings.defaultDeck = ' Languages ';
+
+    await plugin.saveSettings();
+
+    expect(plugin.settings.defaultDeck).toBe('Languages');
+    expect(saveData).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, defaultDeck: 'Languages' });
+  });
+
+  it('restores the default deck instead of saving an empty one', async () => {
+    saveData.mockReset();
+    saveData.mockResolvedValue(undefined);
+    const plugin = createPlugin();
+    plugin.settings.defaultDeck = '  ';
+
+    await plugin.saveSettings();
+
+    expect(plugin.settings.defaultDeck).toBe(DEFAULT_SETTINGS.defaultDeck);
+    expect(saveData).toHaveBeenCalledWith(DEFAULT_SETTINGS);
+  });
+
   it('serializes point-in-time snapshots so the newest edit is saved last', async () => {
     const firstWrite = deferred();
     saveData.mockReset();

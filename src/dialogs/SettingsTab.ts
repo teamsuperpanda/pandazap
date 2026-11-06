@@ -8,6 +8,7 @@ import {
   markerLabels,
   parseAnkiConnectUrl,
   parsePort,
+  validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
 } from '../settings';
@@ -22,6 +23,8 @@ const URL_DESCRIPTION = 'The URL where Anki connect is running.';
 const URL_ERROR = 'Enter an http(s) URL or a host such as 127.0.0.1:8765.';
 const PORT_DESCRIPTION = 'The port where Anki connect is running.';
 const PORT_ERROR = `Port must be a whole number between ${ANKI_CONNECT_PORT_MIN} and ${ANKI_CONNECT_PORT_MAX}.`;
+const DEFAULT_DECK_DESCRIPTION =
+  'Deck used for all cards when note-based deck organization is off.';
 
 export class PandaZapSettingTab extends PluginSettingTab {
   plugin: PandaZapPlugin;
@@ -50,6 +53,11 @@ export class PandaZapSettingTab extends PluginSettingTab {
                 })
               );
             },
+          },
+          {
+            name: 'Default deck',
+            desc: DEFAULT_DECK_DESCRIPTION,
+            render: (setting) => this.renderDefaultDeckSetting(setting),
           },
           {
             name: 'Bold question in reading mode',
@@ -190,6 +198,40 @@ export class PandaZapSettingTab extends PluginSettingTab {
         ],
       },
     ];
+  }
+
+  private renderDefaultDeckSetting(setting: Setting): void {
+    setting
+      .setName('Default deck')
+      .setDesc(DEFAULT_DECK_DESCRIPTION)
+      .addText((text) => {
+        const inputEl = (text as TextComponentWithInput).inputEl;
+        const showDescription = (error: string | null) => {
+          if (setting.descEl) setting.descEl.textContent = error ?? DEFAULT_DECK_DESCRIPTION;
+        };
+
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.defaultDeck)
+          .setValue(this.plugin.settings.defaultDeck)
+          .onChange((value) => {
+            const deck = value.trim();
+            const error = validateDeckName(deck);
+            if (error) {
+              showDescription(error);
+              return;
+            }
+            this.plugin.settings.defaultDeck = deck;
+            void this.plugin.saveSettings();
+            showDescription(null);
+          });
+
+        inputEl.addEventListener('blur', () => {
+          const error = validateDeckName(inputEl.value);
+          inputEl.value = this.plugin.settings.defaultDeck;
+          showDescription(null);
+          if (error) new Notice(error);
+        });
+      });
   }
 
   private renderAnkiConnectUrlSetting(setting: Setting): void {
