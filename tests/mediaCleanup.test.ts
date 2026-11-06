@@ -47,10 +47,12 @@ function createPlugin(connector: AnkiConnector): PandaZapPlugin {
   const internals = plugin as unknown as {
     settings: PandaZapSettings;
     ankiConnector: AnkiConnector;
+    syncInFlight: Set<string>;
     app: unknown;
   };
   internals.settings = { ...DEFAULT_SETTINGS };
   internals.ankiConnector = connector;
+  internals.syncInFlight = new Set();
   internals.app = {};
   return plugin;
 }

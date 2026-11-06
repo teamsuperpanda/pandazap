@@ -18,6 +18,12 @@ This document explains the plugin settings and how they affect extraction and sy
 
 Keep Anki running and reachable at this address while syncing.
 
+### Sync
+
+- **Sync on save**
+  - When enabled, Panda Zap syncs a note about 2.5 seconds after you save it. Only notes that already have cards in Anki are touched, so a new note is never added silently.
+  - Silent syncs never delete cards. Connection or sync failures appear in the status bar instead of a dialog, and clear on the next successful sync.
+
 ### Decking and targeting
 
 - **Default Deck**

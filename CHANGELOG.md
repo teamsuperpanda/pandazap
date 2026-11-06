@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- Added "Sync current note to Anki" and a Markdown file-menu entry for direct single-note and multi-note syncing.
+- Added an opt-in "Sync on save" setting that syncs notes already in Anki after a short delay.
 - Updated development dependencies to their latest compatible releases.
 - Fixed: security advisories GHSA-g3hv-75wg-m249 (minimatch) and GHSA-4p3w-j4w9-5jqw (moment) no longer affect the dependency tree.
 

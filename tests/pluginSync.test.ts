@@ -61,6 +61,7 @@ function createPlugin(
     settings: PandaZapSettings;
     ankiConnector: ReturnType<typeof connectorStub>;
     tagMigrationQueue: Promise<void>;
+    noteHasCardsCache: Map<string, boolean>;
     app: {
       vault: {
         getAbstractFileByPath: (path: string) => unknown;
@@ -71,6 +72,7 @@ function createPlugin(
   internals.settings = DEFAULT_SETTINGS;
   internals.ankiConnector = connector;
   internals.tagMigrationQueue = Promise.resolve();
+  internals.noteHasCardsCache = new Map();
   internals.app = {
     vault: {
       getAbstractFileByPath: (path: string) => files.get(path)?.file ?? null,

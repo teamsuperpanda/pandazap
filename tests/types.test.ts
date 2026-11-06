@@ -18,6 +18,7 @@ describe('Types and Constants', () => {
       expect(DEFAULT_SETTINGS.noteType).toBe('Basic');
       expect(DEFAULT_SETTINGS.useNoteBased).toBe(true);
       expect(DEFAULT_SETTINGS.boldQuestionInReadingMode).toBe(true);
+      expect(DEFAULT_SETTINGS.syncOnSave).toBe(false);
     });
 
     it('has all required properties', () => {
@@ -30,6 +31,7 @@ describe('Types and Constants', () => {
       expect(DEFAULT_SETTINGS).toHaveProperty('noteType');
       expect(DEFAULT_SETTINGS).toHaveProperty('useNoteBased');
       expect(DEFAULT_SETTINGS).toHaveProperty('boldQuestionInReadingMode');
+      expect(DEFAULT_SETTINGS).toHaveProperty('syncOnSave');
       expect(DEFAULT_SETTINGS.pendingTagMigrations).toEqual([]);
     });
   });

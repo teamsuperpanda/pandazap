@@ -133,6 +133,7 @@ export function normalizeSettings(raw: unknown): PandaZapSettings {
       source.boldQuestionInReadingMode,
       DEFAULT_SETTINGS.boldQuestionInReadingMode
     ),
+    syncOnSave: normalizeBoolean(source.syncOnSave, DEFAULT_SETTINGS.syncOnSave),
     pendingTagMigrations: normalizePendingTagMigrations(source.pendingTagMigrations),
   };
 }
