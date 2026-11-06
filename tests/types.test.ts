@@ -4,6 +4,7 @@ import {
   CardAction,
   createSyncContext,
   describeSyncModalStatus,
+  describeSyncResultNotice,
 } from '../src/sync/types';
 
 describe('Types and Constants', () => {
@@ -86,6 +87,37 @@ describe('Types and Constants', () => {
       expect(Object.isFrozen(context)).toBe(true);
       expect(Object.isFrozen(context.cards)).toBe(true);
       expect(Object.isFrozen(context.cards[0])).toBe(true);
+    });
+  });
+
+  describe('describeSyncResultNotice', () => {
+    const card = { question: 'Q', answer: 'A', line: 1 };
+
+    it('reports the partial result after a cancellation', () => {
+      const notice = describeSyncResultNotice(
+        {
+          cards: [
+            { card, status: 'added' },
+            { card, status: 'skipped-identical' },
+            { card, status: 'failed', reason: 'boom' },
+          ],
+        },
+        { done: 3, total: 8, cancelled: true }
+      );
+
+      expect(notice).toBe('Cancelled after 3 of 8 cards: 1 succeeded, 1 failed, 1 skipped');
+    });
+
+    it('keeps the completion wording when nothing was cancelled', () => {
+      expect(describeSyncResultNotice({ cards: [] })).toBe(
+        'Sync completed: 0 succeeded, 0 skipped'
+      );
+      expect(
+        describeSyncResultNotice({
+          cards: [{ card, status: 'added' }],
+          deletion: { deletedCount: 2, failed: false },
+        })
+      ).toBe('Sync completed: 1 succeeded, 0 skipped, 2 deleted');
     });
   });
 });

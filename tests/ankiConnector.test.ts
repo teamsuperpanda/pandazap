@@ -840,4 +840,103 @@ describe('AnkiConnector', () => {
       vi.useRealTimers();
     }
   });
+
+  it('reports progress for every processed card', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(null);
+      if (action === 'findNotes') return response([]);
+      if (action === 'addNote') return response('1');
+      throw new Error(`Unexpected action: ${action}`);
+    });
+    const cards = [1, 2, 3].map((line) => ({ question: `Q${line}`, answer: 'A', line }));
+    const progress: Array<[number, number]> = [];
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      cards,
+      false,
+      'mine.md',
+      undefined,
+      false,
+      undefined,
+      false,
+      {
+        onProgress: (done, total) => progress.push([done, total]),
+      }
+    );
+
+    expect(progress).toEqual([
+      [0, 3],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+    expect(result.cards).toHaveLength(3);
+  });
+
+  it('stops before the next card when the run is cancelled', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(null);
+      if (action === 'findNotes') return response([]);
+      if (action === 'addNote') return response('1');
+      throw new Error(`Unexpected action: ${action}`);
+    });
+    const cards = [1, 2, 3].map((line) => ({ question: `Q${line}`, answer: 'A', line }));
+    const abort = { cancelled: false };
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      cards,
+      false,
+      'mine.md',
+      undefined,
+      false,
+      undefined,
+      false,
+      {
+        abort,
+        onProgress: (done) => {
+          if (done === 1) abort.cancelled = true;
+        },
+      }
+    );
+
+    expect(requests('addNote')).toHaveLength(1);
+    expect(result.cards).toEqual([{ card: cards[0], status: 'added', deckName: 'mine' }]);
+  });
+
+  it('does not delete notes when cancellation lands before the deletion', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(null);
+      if (action === 'findNotes') return response([]);
+      if (action === 'addNote') return response('1');
+      throw new Error(`Unexpected action: ${action}`);
+    });
+    const abort = { cancelled: false };
+    const card = { question: 'Q', answer: 'A', line: 1 };
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      [card],
+      false,
+      'mine.md',
+      'Q: Q\nA: A',
+      true,
+      ['11'],
+      false,
+      {
+        abort,
+        onProgress: (done, total) => {
+          if (done === total) abort.cancelled = true;
+        },
+      }
+    );
+
+    expect(requests('deleteNotes')).toHaveLength(0);
+    expect(result.deletion).toBeUndefined();
+    expect(result.cards).toEqual([{ card, status: 'added', deckName: 'mine' }]);
+  });
 });

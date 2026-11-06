@@ -5,7 +5,7 @@ const { notices } = vi.hoisted(() => ({ notices: [] as string[] }));
 vi.mock('obsidian', () => ({
   App: class {},
   Modal: class {
-    contentEl = { querySelector: () => null };
+    contentEl = { querySelector: () => null, empty: () => undefined };
     open() {
       // no-op
     }
@@ -23,6 +23,7 @@ vi.mock('obsidian', () => ({
 vi.mock('../src/main', () => ({ default: class {} }));
 
 import { SyncModal } from '../src/dialogs/SyncModal';
+import { Modal } from 'obsidian';
 import {
   CardAction,
   DEFAULT_SETTINGS,
@@ -73,6 +74,8 @@ function pluginStub(
     syncCardsToAnki: vi.fn().mockResolvedValue({ cards: [] }),
     analyzeBatchSyncOperation: vi.fn().mockResolvedValue(batchAnalysis),
     syncBatchCards: vi.fn().mockResolvedValue({ cards: [] }),
+    showSyncModal: vi.fn(),
+    clearActiveSyncModal: vi.fn(),
   };
 }
 
@@ -97,7 +100,16 @@ describe('SyncModal deletion handling', () => {
     await modal.performSingleSync();
 
     expect(confirm).toHaveBeenCalledWith(1);
-    expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(false, true, context, ['11']);
+    expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(
+      false,
+      true,
+      context,
+      ['11'],
+      expect.objectContaining({
+        abort: expect.objectContaining({ cancelled: false }),
+        onProgress: expect.any(Function),
+      })
+    );
   });
 
   it('shows the no-cards notice for a note that was never synced', async () => {
@@ -160,5 +172,50 @@ describe('SyncModal deletion handling', () => {
 
     expect(notices).toContain('No cards found in selected notes');
     expect(plugin.syncBatchCards).not.toHaveBeenCalled();
+  });
+
+  it('blocks closing while a sync is running', async () => {
+    const context = createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md');
+    const plugin = pluginStub(context, analysis(), analysis());
+    let release: (() => void) | undefined;
+    plugin.syncCardsToAnki.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ cards: [] });
+        })
+    );
+    const modal = createModal(plugin);
+    const closeSpy = vi.spyOn(Modal.prototype, 'close');
+
+    const run = modal.performSingleSync();
+    await vi.waitFor(() => expect(plugin.syncCardsToAnki).toHaveBeenCalled());
+
+    modal.close();
+
+    expect(notices).toContain('Cancel the sync first');
+    expect(closeSpy).not.toHaveBeenCalled();
+
+    release?.();
+    await run;
+  });
+
+  it('does not start a sync once the modal closed', async () => {
+    const context = createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md');
+    const plugin = pluginStub(context, analysis(), analysis());
+    const modal = createModal(plugin);
+    (modal as unknown as { closed: boolean }).closed = true;
+
+    await modal.performSingleSync();
+
+    expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
+  });
+
+  it('clears the active modal when it closes', () => {
+    const plugin = pluginStub(createSyncContext([]), analysis(), analysis());
+    const modal = new SyncModal({} as never, plugin as never);
+
+    (modal as unknown as { onClose(): void }).onClose();
+
+    expect(plugin.clearActiveSyncModal).toHaveBeenCalledWith(modal);
   });
 });

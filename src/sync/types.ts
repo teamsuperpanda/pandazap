@@ -103,6 +103,29 @@ export interface SyncResult {
   deletion?: SyncDeletionResult;
 }
 
+/**
+ * Cooperative cancellation token for a sync run. The caller sets `cancelled`;
+ * the sync stops before the next Anki mutation and returns what it has so far.
+ */
+export interface SyncAbortToken {
+  cancelled: boolean;
+}
+
+/** Optional hooks a caller can pass into a sync run. */
+export interface SyncRunOptions {
+  /** Called after each processed card with the running count and the run total. */
+  onProgress?: (done: number, total: number) => void;
+  /** Checked between cards and before deletions; setting `cancelled` stops the run. */
+  abort?: SyncAbortToken;
+}
+
+/** State of a sync run that was cancelled by the user. */
+export interface SyncResultProgress {
+  done: number;
+  total: number;
+  cancelled: boolean;
+}
+
 /** Connection state reported by AnkiConnect, including the version when known. */
 export type AnkiConnectionStatus = 'ok' | 'unreachable' | 'version-too-old' | 'protocol-error';
 
@@ -205,6 +228,41 @@ export function formatSyncResult(result: SyncResult, settings?: PandaZapSettings
     );
   }
   return lines;
+}
+
+/**
+ * Wording for the completion notice. A cancelled run reports the partial
+ * result, so cancelling never hides what already happened in Anki.
+ */
+export function describeSyncResultNotice(
+  result: SyncResult,
+  progress?: SyncResultProgress
+): string {
+  const total = result.cards.length;
+  const succeeded = result.cards.filter(
+    (card) => card.status === 'added' || card.status === 'updated'
+  ).length;
+  const failed = result.cards.filter(
+    (card) => card.status === 'failed' || card.status === 'image-failed'
+  ).length;
+  const skipped = result.cards.filter(
+    (card) => card.status === 'skipped-existing' || card.status === 'skipped-identical'
+  ).length;
+  const deleted = result.deletion && !result.deletion.failed ? result.deletion.deletedCount : 0;
+  const deletionNote = deleted > 0 ? `, ${deleted} deleted` : '';
+  const deletionFailedNote = result.deletion?.failed ? '; deletion failed' : '';
+  const summary = `${succeeded} succeeded, ${failed} failed, ${skipped} skipped`;
+
+  if (progress?.cancelled) {
+    return `Cancelled after ${progress.done} of ${progress.total} cards: ${summary}${deletionNote}${deletionFailedNote}`;
+  }
+  if (total > 0 && failed === total) {
+    return `Sync failed: ${failed} of ${total} cards failed${deletionNote}${deletionFailedNote}`;
+  }
+  if (failed > 0 || result.deletion?.failed) {
+    return `Sync completed with issues: ${summary}${deletionNote}${deletionFailedNote}`;
+  }
+  return `Sync completed: ${succeeded} succeeded, ${skipped} skipped${deletionNote}`;
 }
 
 /** A point-in-time snapshot of the note used for one analysis/sync flow. */

@@ -13,6 +13,7 @@ import {
   createSyncContext,
   createBatchSyncContext,
   SyncResult,
+  SyncRunOptions,
   AnkiConnectionState,
   describeConnection,
 } from './sync/types';
@@ -25,6 +26,7 @@ export default class PandaZapPlugin extends Plugin {
   private ankiConnector: AnkiConnector;
   private cardExtractor: CardExtractor;
   private settingsSaveQueue: Promise<void> = Promise.resolve();
+  private activeSyncModal: SyncModal | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -71,16 +73,52 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   openSyncDialog() {
-    new SyncModal(this.app, this).open();
+    if (this.activeSyncModal) {
+      this.reportSyncDialogOpen();
+      return;
+    }
+    this.showSyncModal(new SyncModal(this.app, this));
   }
 
   async openBatchSyncDialog(notePaths: string[], includeEmptyNotes = true): Promise<void> {
+    if (this.activeSyncModal) {
+      this.reportSyncDialogOpen();
+      return;
+    }
     const bContext = await this.captureBatchSyncContext(notePaths, includeEmptyNotes);
     if (bContext.contexts.size === 0) {
       new Notice('No Markdown notes with cards found');
       return;
     }
-    new SyncModal(this.app, this, bContext).open();
+    this.showSyncModal(new SyncModal(this.app, this, bContext));
+  }
+
+  /**
+   * Opens a sync dialog, unless one is already open. A second command reuses
+   * the open dialog instead of starting a second, concurrent run.
+   */
+  showSyncModal(modal: SyncModal): void {
+    if (this.activeSyncModal) {
+      this.reportSyncDialogOpen();
+      return;
+    }
+    this.activeSyncModal = modal;
+    try {
+      modal.open();
+    } catch (error) {
+      // A synchronous open failure must not poison the guard for the session.
+      this.activeSyncModal = null;
+      throw error;
+    }
+  }
+
+  /** Called by the modal on close, so the next command can open a dialog. */
+  clearActiveSyncModal(modal: SyncModal): void {
+    if (this.activeSyncModal === modal) this.activeSyncModal = null;
+  }
+
+  private reportSyncDialogOpen(): void {
+    new Notice('A sync dialog is already open. Cancel the running sync or close the dialog.');
   }
 
   private getSelectedNotePaths(): string[] {
@@ -224,17 +262,41 @@ export default class PandaZapPlugin extends Plugin {
     bContext: BatchSyncContext,
     preview: boolean = false,
     deleteConfirmed: boolean = false,
-    confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>
+    confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>,
+    runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
+    const result: SyncResult = { cards: [] };
+    const totalCards = bContext.totalCards;
+    const onProgress = runOptions?.onProgress;
+    const abort = runOptions?.abort;
+    // Publish the batch total before the connection test, so a cancel during
+    // that test still reports N of M cards instead of 0 of 0.
+    onProgress?.(0, totalCards);
+
     const connection = await this.ankiConnector.testConnection();
     if (connection.status !== 'ok') {
       throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
     }
-    const result: SyncResult = { cards: [] };
 
     try {
+      let noteStart = 0;
       for (const [notePath, context] of bContext.contexts) {
+        if (abort?.cancelled) break;
+        // Progress is reported per note, so the offsets keep it cumulative for
+        // the whole batch.
+        const base = noteStart;
+        const noteOptions: SyncRunOptions | undefined =
+          onProgress || abort
+            ? {
+                abort,
+                onProgress: onProgress
+                  ? (done: number) => {
+                      onProgress(base + done, totalCards);
+                    }
+                  : undefined,
+              }
+            : undefined;
         // A note with no confirmed deletions must receive an explicit empty list.
         // Passing undefined would let the connector re-analyse and delete notes
         // the user never saw in the confirmation.
@@ -248,7 +310,8 @@ export default class PandaZapPlugin extends Plugin {
           context.noteContent,
           deleteConfirmed,
           confirmedDeletionIds,
-          true
+          true,
+          noteOptions
         );
         result.cards.push(...noteResult.cards);
         if (noteResult.deletion) {
@@ -261,6 +324,7 @@ export default class PandaZapPlugin extends Plugin {
               undefined,
           };
         }
+        noteStart += context.cards.length;
       }
 
       return result;
@@ -289,7 +353,8 @@ export default class PandaZapPlugin extends Plugin {
     preview: boolean = false,
     deleteConfirmed: boolean = false,
     context?: SyncContext,
-    confirmedDeletionIds?: readonly string[]
+    confirmedDeletionIds?: readonly string[],
+    runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
     const syncContext = context ?? this.captureSyncContext();
@@ -300,7 +365,9 @@ export default class PandaZapPlugin extends Plugin {
         syncContext.notePath,
         syncContext.noteContent,
         deleteConfirmed,
-        confirmedDeletionIds
+        confirmedDeletionIds,
+        false,
+        runOptions
       );
     } finally {
       // A sync run writes notes, so re-read Anki on the next user action.

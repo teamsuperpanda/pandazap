@@ -1,24 +1,40 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { requestUrl } = vi.hoisted(() => ({ requestUrl: vi.fn() }));
+const { requestUrl, notices, openSyncModal } = vi.hoisted(() => ({
+  requestUrl: vi.fn(),
+  notices: [] as string[],
+  openSyncModal: vi.fn(),
+}));
 
 vi.mock('obsidian', () => ({
   Plugin: class {},
   MarkdownView: class {},
   TFile: class {},
-  Notice: class {},
+  Notice: class {
+    constructor(message: string) {
+      notices.push(message);
+    }
+  },
   requestUrl,
 }));
-vi.mock('../src/dialogs/SyncModal', () => ({ SyncModal: class {} }));
+vi.mock('../src/dialogs/SyncModal', () => ({
+  SyncModal: class {
+    open() {
+      openSyncModal();
+    }
+  },
+}));
 vi.mock('../src/dialogs/SettingsTab', () => ({ PandaZapSettingTab: class {} }));
 
 import PandaZapPlugin from '../src/main';
+import { SyncModal } from '../src/dialogs/SyncModal';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import {
   DEFAULT_SETTINGS,
   createBatchSyncContext,
   createSyncContext,
   type PandaZapSettings,
+  type SyncRunOptions,
 } from '../src/sync/types';
 import { TFile } from 'obsidian';
 
@@ -135,7 +151,16 @@ describe('batch sync of an emptied note', () => {
 
     await plugin.syncBatchCards(bContext, false, true, new Map([['one.md', ['11']]]));
 
-    expect(connector.syncCards).toHaveBeenCalledWith([], false, 'one.md', '', true, ['11'], true);
+    expect(connector.syncCards).toHaveBeenCalledWith(
+      [],
+      false,
+      'one.md',
+      '',
+      true,
+      ['11'],
+      true,
+      undefined
+    );
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
   });
 
@@ -151,7 +176,17 @@ describe('batch sync of an emptied note', () => {
 
     await plugin.syncBatchCards(bContext, false, true, new Map([['two.md', ['22']]]));
 
-    expect(connector.syncCards).toHaveBeenNthCalledWith(1, [], false, 'one.md', '', true, [], true);
+    expect(connector.syncCards).toHaveBeenNthCalledWith(
+      1,
+      [],
+      false,
+      'one.md',
+      '',
+      true,
+      [],
+      true,
+      undefined
+    );
     expect(connector.syncCards).toHaveBeenNthCalledWith(
       2,
       [],
@@ -160,7 +195,8 @@ describe('batch sync of an emptied note', () => {
       '',
       true,
       ['22'],
-      true
+      true,
+      undefined
     );
   });
 
@@ -233,5 +269,114 @@ describe('batch capture of empty notes', () => {
 
     expect([...bContext.contexts.keys()]).toEqual(['cards.md']);
     expect(bContext.totalCards).toBe(1);
+  });
+});
+
+describe('sync dialog single instance', () => {
+  beforeEach(() => {
+    notices.length = 0;
+    openSyncModal.mockReset();
+  });
+
+  it('reuses the open dialog instead of opening a second one', () => {
+    const plugin = createPlugin(connectorStub());
+    const running = { open: vi.fn() } as unknown as SyncModal;
+    plugin.showSyncModal(running);
+
+    plugin.openSyncDialog();
+
+    expect(running.open).toHaveBeenCalledTimes(1);
+    expect(openSyncModal).not.toHaveBeenCalled();
+    expect(notices).toContain(
+      'A sync dialog is already open. Cancel the running sync or close the dialog.'
+    );
+  });
+
+  it('does not keep a modal that failed to open', () => {
+    const plugin = createPlugin(connectorStub());
+    const broken = {
+      open: () => {
+        throw new Error('open failed');
+      },
+    } as unknown as SyncModal;
+
+    expect(() => plugin.showSyncModal(broken)).toThrow('open failed');
+
+    plugin.openSyncDialog();
+    expect(openSyncModal).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a new dialog after the active modal closed', () => {
+    const plugin = createPlugin(connectorStub());
+    const closed = { open: vi.fn() } as unknown as SyncModal;
+    plugin.showSyncModal(closed);
+    plugin.clearActiveSyncModal(closed);
+
+    plugin.openSyncDialog();
+
+    expect(openSyncModal).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the active modal when a different modal is cleared', () => {
+    const plugin = createPlugin(connectorStub());
+    const active = { open: vi.fn() } as unknown as SyncModal;
+    plugin.showSyncModal(active);
+
+    plugin.clearActiveSyncModal({ open: vi.fn() } as unknown as SyncModal);
+    plugin.openSyncDialog();
+
+    expect(openSyncModal).not.toHaveBeenCalled();
+  });
+});
+
+describe('batch sync progress and cancellation', () => {
+  function threeNotes() {
+    return createBatchSyncContext(
+      new Map(
+        ['one.md', 'two.md', 'three.md'].map((path) => [
+          path,
+          createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], path),
+        ])
+      )
+    );
+  }
+
+  it('reports progress across the whole batch', async () => {
+    const connector = connectorStub();
+    connector.syncCards.mockImplementation(async (...args: unknown[]) => {
+      const runOptions = args[7] as SyncRunOptions | undefined;
+      runOptions?.onProgress?.(1, 1);
+      return { cards: [] };
+    });
+    const plugin = createPlugin(connector);
+    const progress: Array<[number, number]> = [];
+
+    await plugin.syncBatchCards(threeNotes(), false, false, undefined, {
+      onProgress: (done, total) => progress.push([done, total]),
+    });
+
+    expect(progress).toEqual([
+      [0, 3],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
+  it('stops before the next note when cancelled', async () => {
+    const connector = connectorStub();
+    connector.syncCards.mockImplementation(async (...args: unknown[]) => {
+      const runOptions = args[7] as SyncRunOptions | undefined;
+      if (runOptions?.abort) runOptions.abort.cancelled = true;
+      return { cards: [] };
+    });
+    const plugin = createPlugin(connector);
+
+    await plugin.syncBatchCards(threeNotes(), false, false, undefined, {
+      abort: { cancelled: false },
+    });
+
+    expect(connector.syncCards).toHaveBeenCalledTimes(1);
+    expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
   });
 });
