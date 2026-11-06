@@ -540,21 +540,21 @@ export class PandaZapSettingTab extends PluginSettingTab {
     this.connectionResultEl.empty();
 
     this.connectionResultEl.className = 'panda-zap-connection-result loading';
-    const loadingEl = this.connectionResultEl.createDiv('connection-content');
-    loadingEl.createSpan({ cls: 'connection-icon', text: 'loading' });
-    loadingEl.createSpan({ cls: 'connection-text', text: 'Testing connection...' });
+    const loadingEl = this.connectionResultEl.createDiv('panda-zap-connection-content');
+    loadingEl.createSpan({ cls: 'panda-zap-connection-icon', text: 'loading' });
+    loadingEl.createSpan({ cls: 'panda-zap-connection-text', text: 'Testing connection...' });
 
     const state = await this.plugin.testAnkiConnectionStatus();
     this.connectionResultEl.empty();
     if (state.status === 'ok') {
       this.connectionResultEl.className = 'panda-zap-connection-result connected';
-      const connectedEl = this.connectionResultEl.createDiv('connection-content');
+      const connectedEl = this.connectionResultEl.createDiv('panda-zap-connection-content');
       connectedEl.createSpan({
-        cls: 'connection-text',
+        cls: 'panda-zap-connection-text',
         text: describeConnection(state, ANKI_CONNECT_VERSION),
       });
       connectedEl.createSpan({
-        cls: 'connection-details',
+        cls: 'panda-zap-connection-details',
         text: `${this.plugin.settings.ankiConnectUrl}:${this.plugin.settings.ankiConnectPort}`,
       });
       void this.refreshPickerLists(true);
@@ -563,13 +563,13 @@ export class PandaZapSettingTab extends PluginSettingTab {
 
     const isProtocolIssue = state.status === 'version-too-old' || state.status === 'protocol-error';
     this.connectionResultEl.className = `panda-zap-connection-result ${isProtocolIssue ? 'error' : 'disconnected'}`;
-    const resultEl = this.connectionResultEl.createDiv('connection-content');
+    const resultEl = this.connectionResultEl.createDiv('panda-zap-connection-content');
     resultEl.createSpan({
-      cls: 'connection-icon',
+      cls: 'panda-zap-connection-icon',
       text: isProtocolIssue ? 'error' : 'disconnected',
     });
     resultEl.createSpan({
-      cls: 'connection-text',
+      cls: 'panda-zap-connection-text',
       text: describeConnection(state, ANKI_CONNECT_VERSION),
     });
   }

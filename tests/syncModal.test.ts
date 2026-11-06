@@ -4,6 +4,7 @@ const { notices } = vi.hoisted(() => ({ notices: [] as string[] }));
 
 vi.mock('obsidian', () => ({
   App: class {},
+  setIcon: vi.fn(),
   Modal: class {
     contentEl = { querySelector: () => null, empty: () => undefined };
     open() {
