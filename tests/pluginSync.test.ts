@@ -93,9 +93,9 @@ describe('plugin sync cache invalidation', () => {
     const plugin = createPlugin(connector);
     const bContext = createBatchSyncContext(
       new Map([
-        ['one.md', createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'one.md')],
-        ['two.md', createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'two.md')],
-        ['three.md', createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'three.md')],
+        ['one.md', createSyncContext([{ question: 'Q', answer: 'A' }], 'one.md')],
+        ['two.md', createSyncContext([{ question: 'Q', answer: 'A' }], 'two.md')],
+        ['three.md', createSyncContext([{ question: 'Q', answer: 'A' }], 'three.md')],
       ])
     );
 
@@ -110,7 +110,7 @@ describe('plugin sync cache invalidation', () => {
     connector.syncCards.mockRejectedValueOnce(new Error('batch failed'));
     const plugin = createPlugin(connector);
     const bContext = createBatchSyncContext(
-      new Map([['one.md', createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'one.md')]])
+      new Map([['one.md', createSyncContext([{ question: 'Q', answer: 'A' }], 'one.md')]])
     );
 
     await expect(plugin.syncBatchCards(bContext)).rejects.toThrow('batch failed');
@@ -123,8 +123,7 @@ describe('plugin sync cache invalidation', () => {
 
     await plugin.syncCardsToAnki(
       false,
-      false,
-      createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md')
+      createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md')
     );
 
     expect(connector.syncCards).toHaveBeenCalledTimes(1);
@@ -139,8 +138,7 @@ describe('plugin sync cache invalidation', () => {
     await expect(
       plugin.syncCardsToAnki(
         false,
-        false,
-        createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md')
+        createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md')
       )
     ).rejects.toThrow('sync failed');
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
@@ -155,11 +153,10 @@ describe('batch sync of an emptied note', () => {
       new Map([['one.md', createSyncContext([], 'one.md', '')]])
     );
 
-    await plugin.syncBatchCards(bContext, false, true, new Map([['one.md', ['11']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['one.md', ['11']]]));
 
     expect(connector.syncCards).toHaveBeenCalledWith(
       [],
-      false,
       'one.md',
       '',
       true,
@@ -180,12 +177,11 @@ describe('batch sync of an emptied note', () => {
       ])
     );
 
-    await plugin.syncBatchCards(bContext, false, true, new Map([['two.md', ['22']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['two.md', ['22']]]));
 
     expect(connector.syncCards).toHaveBeenNthCalledWith(
       1,
       [],
-      false,
       'one.md',
       '',
       true,
@@ -196,7 +192,6 @@ describe('batch sync of an emptied note', () => {
     expect(connector.syncCards).toHaveBeenNthCalledWith(
       2,
       [],
-      false,
       'two.md',
       '',
       true,
@@ -245,7 +240,7 @@ describe('batch sync of an emptied note', () => {
     );
 
     // The map only confirms deletions for another note.
-    await plugin.syncBatchCards(bContext, false, true, new Map([['other.md', ['99']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['other.md', ['99']]]));
 
     const actions = requestUrl.mock.calls.map(
       (call) => (JSON.parse((call[0] as { body: string }).body) as { action: string }).action
@@ -341,7 +336,7 @@ describe('batch sync progress and cancellation', () => {
       new Map(
         ['one.md', 'two.md', 'three.md'].map((path) => [
           path,
-          createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], path),
+          createSyncContext([{ question: 'Q', answer: 'A' }], path),
         ])
       )
     );
@@ -350,14 +345,14 @@ describe('batch sync progress and cancellation', () => {
   it('reports progress across the whole batch', async () => {
     const connector = connectorStub();
     connector.syncCards.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[7] as SyncRunOptions | undefined;
+      const runOptions = args[6] as SyncRunOptions | undefined;
       runOptions?.onProgress?.(1, 1);
       return { cards: [] };
     });
     const plugin = createPlugin(connector);
     const progress: Array<[number, number]> = [];
 
-    await plugin.syncBatchCards(threeNotes(), false, false, undefined, {
+    await plugin.syncBatchCards(threeNotes(), false, undefined, {
       onProgress: (done, total) => progress.push([done, total]),
     });
 
@@ -372,13 +367,13 @@ describe('batch sync progress and cancellation', () => {
   it('stops before the next note when cancelled', async () => {
     const connector = connectorStub();
     connector.syncCards.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[7] as SyncRunOptions | undefined;
+      const runOptions = args[6] as SyncRunOptions | undefined;
       if (runOptions?.abort) runOptions.abort.cancelled = true;
       return { cards: [] };
     });
     const plugin = createPlugin(connector);
 
-    await plugin.syncBatchCards(threeNotes(), false, false, undefined, {
+    await plugin.syncBatchCards(threeNotes(), false, undefined, {
       abort: { cancelled: false },
     });
 

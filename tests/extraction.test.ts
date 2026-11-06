@@ -33,7 +33,6 @@ describe('extractQACardsFromText', () => {
     expect(cards[0]).toEqual({
       question: 'What is TypeScript?',
       answer: 'A typed superset of JavaScript',
-      line: 1,
     });
   });
 
@@ -48,7 +47,6 @@ It was created by Facebook`;
     expect(cards[0]).toEqual({
       question: 'What is React?',
       answer: 'A JavaScript library for building user interfaces\nIt was created by Facebook',
-      line: 1,
     });
   });
 

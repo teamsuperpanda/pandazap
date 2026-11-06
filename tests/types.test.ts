@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_SETTINGS,
-  CardAction,
   createSyncContext,
   describeSyncModalStatus,
   describeSyncResultNotice,
@@ -39,14 +38,6 @@ describe('Types and Constants', () => {
     });
   });
 
-  describe('CardAction enum', () => {
-    it('has correct action values', () => {
-      expect(CardAction.ADD).toBe('add');
-      expect(CardAction.UPDATE).toBe('update');
-      expect(CardAction.DELETE).toBe('delete');
-    });
-  });
-
   describe('describeSyncModalStatus', () => {
     it('keeps a successful connection separate from an analysis failure', () => {
       const status = describeSyncModalStatus({ status: 'ok', version: 6 }, 'findNotes failed', 6);
@@ -79,14 +70,14 @@ describe('Types and Constants', () => {
 
   describe('createSyncContext', () => {
     it('takes an immutable point-in-time copy of cards and note data', () => {
-      const cards = [{ question: 'Q', answer: 'A', line: 3 }];
+      const cards = [{ question: 'Q', answer: 'A' }];
       const context = createSyncContext(cards, 'first.md', 'Q: Q\nA: A');
 
       cards[0].question = 'changed';
-      cards.push({ question: 'later', answer: 'later', line: 4 });
+      cards.push({ question: 'later', answer: 'later' });
 
       expect(context).toEqual({
-        cards: [{ question: 'Q', answer: 'A', line: 3 }],
+        cards: [{ question: 'Q', answer: 'A' }],
         notePath: 'first.md',
         noteContent: 'Q: Q\nA: A',
       });
@@ -97,7 +88,7 @@ describe('Types and Constants', () => {
   });
 
   describe('describeSyncResultNotice', () => {
-    const card = { question: 'Q', answer: 'A', line: 1 };
+    const card = { question: 'Q', answer: 'A' };
 
     it('reports the partial result after a cancellation', () => {
       const notice = describeSyncResultNotice(

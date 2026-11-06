@@ -135,7 +135,6 @@ describe('extractQACardsFromText - marker correctness', () => {
         question: '**question_text**',
         answer: '_answer_text_',
         image: 'image.png',
-        line: 1,
       },
     ]);
   });

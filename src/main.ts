@@ -6,7 +6,6 @@ import { AnkiConnector } from './sync/AnkiConnector';
 import { CardExtractor } from './sync/CardExtractor';
 import {
   PandaZapSettings,
-  AnkiCard,
   SyncAnalysis,
   SyncContext,
   CardSyncInfo,
@@ -60,7 +59,7 @@ export default class PandaZapPlugin extends Plugin {
     await this.loadSettings();
 
     this.ankiConnector = new AnkiConnector(this.settings, this.app);
-    this.cardExtractor = new CardExtractor(this.app, this.settings);
+    this.cardExtractor = new CardExtractor();
 
     this.addRibbonIcon('zap', 'Sync notes to Anki', () => {
       void this.openSyncDialog();
@@ -380,7 +379,6 @@ export default class PandaZapPlugin extends Plugin {
       try {
         const result = await this.syncBatchCards(
           bContext,
-          false,
           confirmedDeletionIdsByNote !== undefined,
           confirmedDeletionIdsByNote,
           { abort }
@@ -555,7 +553,6 @@ export default class PandaZapPlugin extends Plugin {
     try {
       const result = await this.ankiConnector.syncCards(
         context.cards,
-        false,
         notePath,
         context.noteContent,
         // Silent mode never deletes: no confirmation is given, and the explicit
@@ -1002,7 +999,6 @@ export default class PandaZapPlugin extends Plugin {
 
   async syncBatchCards(
     bContext: BatchSyncContext,
-    preview: boolean = false,
     deleteConfirmed: boolean = false,
     confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>,
     runOptions?: SyncRunOptions
@@ -1048,7 +1044,6 @@ export default class PandaZapPlugin extends Plugin {
           : undefined;
         const noteResult = await this.ankiConnector.syncCards(
           context.cards,
-          preview,
           notePath,
           context.noteContent,
           deleteConfirmed,
@@ -1091,12 +1086,7 @@ export default class PandaZapPlugin extends Plugin {
     );
   }
 
-  extractCardsFromCurrentNote(): AnkiCard[] {
-    return this.cardExtractor.extractCardsFromCurrentNote();
-  }
-
   async syncCardsToAnki(
-    preview: boolean = false,
     deleteConfirmed: boolean = false,
     context?: SyncContext,
     confirmedDeletionIds?: readonly string[],
@@ -1108,7 +1098,6 @@ export default class PandaZapPlugin extends Plugin {
     try {
       const result = await this.ankiConnector.syncCards(
         syncContext.cards,
-        preview,
         syncContext.notePath,
         syncContext.noteContent,
         deleteConfirmed,

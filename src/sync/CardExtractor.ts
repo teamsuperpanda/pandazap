@@ -1,39 +1,11 @@
-import { App, MarkdownView, Notice } from 'obsidian';
-import { AnkiCard, PandaZapSettings } from './types';
-import { extractQACardsFromText } from './extractionUtils';
 import { buildMarkerRegexes } from './markers';
 import { markerLabels } from '../settings';
 import PandaZapPlugin from '../main';
 
 export class CardExtractor {
-  private app: App;
-  private settings: PandaZapSettings;
-
-  constructor(app: App, settings: PandaZapSettings) {
-    this.app = app;
-    this.settings = settings;
-  }
-
-  extractCardsFromCurrentNote(): AnkiCard[] {
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!activeView) {
-      new Notice('No active note found');
-      return [];
-    }
-
-    try {
-      const content = activeView.editor.getValue();
-      return extractQACardsFromText(content, this.settings);
-    } catch (e: unknown) {
-      console.warn('PandaZap: error extracting cards from note', e);
-      new Notice('Error extracting cards from note');
-      return [];
-    }
-  }
-
-  processQACards(element: HTMLElement, plugin?: PandaZapPlugin) {
+  processQACards(element: HTMLElement, plugin: PandaZapPlugin) {
     const containers = element.querySelectorAll('p, div, span, li');
-    const rx = buildMarkerRegexes(plugin?.settings ?? this.settings);
+    const rx = buildMarkerRegexes(plugin.settings);
 
     containers.forEach((container) => {
       if (
@@ -49,7 +21,7 @@ export class CardExtractor {
         return;
       }
 
-      const boldQuestion = plugin?.settings?.boldQuestionInReadingMode ?? true;
+      const boldQuestion = plugin.settings.boldQuestionInReadingMode;
 
       const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
       const toUpdate: Text[] = [];
@@ -73,8 +45,7 @@ export class CardExtractor {
       let changed = false;
       let inQuestion = false;
 
-      const s = plugin?.settings ?? this.settings;
-      const labels = markerLabels(s);
+      const labels = markerLabels(plugin.settings);
       const qLabelFull = `${labels.q}:`;
       const aLabelFull = `${labels.a}:`;
 
