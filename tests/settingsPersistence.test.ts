@@ -4,6 +4,8 @@ const { saveData, loadData } = vi.hoisted(() => ({ saveData: vi.fn(), loadData: 
 
 vi.mock('obsidian', () => ({
   MarkdownView: class {},
+  Modal: class {},
+  setIcon: () => undefined,
   Plugin: class {
     saveData = saveData;
     loadData = loadData;

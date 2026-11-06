@@ -1,6 +1,6 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { stableHash } from './hashUtils';
-import { IMAGE_DOWNLOAD_TIMEOUT_MS } from '../constants';
+import { IMAGE_DOWNLOAD_TIMEOUT_MS, MEDIA_FILENAME_PREFIX } from '../constants';
 import { withTimeout } from './requestTimeout';
 
 /**
@@ -44,9 +44,39 @@ export function sanitizeMediaFilename(
   if (dotIdx > 0) {
     const name = base.substring(0, dotIdx);
     const ext = base.substring(dotIdx);
-    return `pandazap_${h}_${name}${ext}`;
+    return `${MEDIA_FILENAME_PREFIX}${h}_${name}${ext}`;
   }
-  return `pandazap_${h}_${base}`;
+  return `${MEDIA_FILENAME_PREFIX}${h}_${base}`;
+}
+
+const IMG_SRC_PATTERN = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+// Conservative fallback for field markup the tag parser cannot read. Only the
+// plugin's own media can be deleted, so a prefixed token anywhere in a field
+// counts as a reference and keeps that file.
+const PLUGIN_MEDIA_PATTERN = new RegExp(`${MEDIA_FILENAME_PREFIX}[A-Za-z0-9._-]*`, 'g');
+
+/** Strips a local path or bare filename of everything but its last segment. */
+function localMediaFilename(src: string): string | null {
+  const value = src.trim();
+  if (!value) return null;
+  // Absolute schemes (http:, https:, data:, ...) and protocol-relative URLs are
+  // remote, never Anki media names.
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value)) return null;
+  const name = value.split(/[\\/]/).pop()?.trim() ?? '';
+  return name && !/[\s"'<>]/.test(name) ? name : null;
+}
+
+/** Local media filenames an Anki field references through `<img src="...">`. */
+export function extractMediaFilenames(fieldValue: string): string[] {
+  const names = new Set<string>();
+  const pattern = new RegExp(IMG_SRC_PATTERN.source, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(fieldValue))) {
+    const name = localMediaFilename(match[1] ?? match[2] ?? match[3] ?? '');
+    if (name) names.add(name);
+  }
+  for (const token of fieldValue.match(PLUGIN_MEDIA_PATTERN) ?? []) names.add(token);
+  return [...names];
 }
 
 export function getImageFilename(pathOrUrl: string): string {

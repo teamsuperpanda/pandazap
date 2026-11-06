@@ -13,6 +13,7 @@ const defaultSettings: PandaZapSettings = {
   useNoteBased: true,
   boldQuestionInReadingMode: true,
   imageWord: 'I',
+  pendingTagMigrations: [],
 };
 
 describe('extractQACardsFromText', () => {

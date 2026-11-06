@@ -9,15 +9,46 @@ export interface AnkiCard {
 
 /** Shape of a single note returned by Anki Connect's notesInfo action */
 export interface AnkiNoteInfo {
-  noteId: string;
-  noteIds?: string[];
-  id?: string;
+  /** Anki Connect returns a number, older responses and tests may use strings. */
+  noteId: string | number;
+  noteIds?: Array<string | number>;
+  id?: string | number;
   fields: {
     Front?: { value: string };
     Back?: { value: string };
     [key: string]: { value: string } | undefined;
   };
   tags?: string[];
+  /** Card IDs generated from the note, used to find and move its deck. */
+  cards?: number[];
+}
+
+/** Shape of a single card returned by Anki Connect's cardsInfo action */
+export interface AnkiCardInfo {
+  cardId: number;
+  note?: number;
+  deckName?: string;
+}
+
+/**
+ * A renamed note whose Anki source tags still need migrating. Internal state,
+ * not a user setting: it is kept so a rename that happens while Anki is
+ * unreachable is retried instead of producing duplicate cards.
+ */
+export interface PendingTagMigration {
+  fromPath: string;
+  toPath: string;
+}
+
+/** Outcome of moving the Anki notes of one renamed vault path. */
+export interface SourceTagMigrationResult {
+  /** Notes that were retagged, and moved when their deck changed. */
+  migrated: number;
+  /**
+   * Legacy-tagged notes matched the old tag but none could be proven to belong
+   * to the renamed note. They were left in Anki and may now be orphans.
+   */
+  unresolvedLegacy: boolean;
 }
 
 /** Shape of the Anki Connect JSON response */
@@ -48,6 +79,7 @@ export interface PandaZapSettings {
   noteType: string;
   useNoteBased: boolean;
   boldQuestionInReadingMode: boolean;
+  pendingTagMigrations: PendingTagMigration[];
 }
 
 export enum CardAction {
@@ -317,4 +349,5 @@ export const DEFAULT_SETTINGS: PandaZapSettings = {
   noteType: 'Basic',
   useNoteBased: true,
   boldQuestionInReadingMode: true,
+  pendingTagMigrations: [],
 };

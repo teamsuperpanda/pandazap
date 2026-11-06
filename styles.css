@@ -167,6 +167,11 @@
 
 
 .panda-zap-delete-confirm .panda-zap-button-row { display: flex; justify-content: center; gap: 10px; }
+.panda-zap-confirm-heading { display: flex; align-items: center; gap: 8px; }
+.panda-zap-confirm-icon { display: flex; color: var(--text-warning); }
+.panda-zap-confirm-msg { color: var(--text-normal); }
+.panda-zap-confirm-list { margin: 0 0 12px; padding-left: 20px; color: var(--text-muted); font-size: .9em; max-height: 160px; overflow-y: auto; }
+.panda-zap-confirm-modal .panda-zap-button-row { display: flex; justify-content: center; gap: 10px; }
 .panda-zap-cards-container.collapsed { display: none; }
 .panda-zap-cards-container.expanded { display: block; }
 .panda-zap-loading-text { margin-top: 48px; text-align: center; }

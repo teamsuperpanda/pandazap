@@ -13,6 +13,7 @@ pandazap/
 │   ├── dialogs/            # Modal UI components
 │   │   ├── SyncModal.ts    # Main sync dialog: connection -> analysis -> preview -> sync
 │   │   ├── PreviewModal.ts # Card change preview (add/update/delete) with collapsible sections
+│   │   ├── ConfirmModal.ts # Small reusable confirmation dialog for destructive actions
 │   │   └── SettingsTab.ts  # Settings UI using Obsidian 1.13+ getSettingDefinitions() API
 │   └── sync/               # Core sync engine
 │       ├── types.ts         # All TypeScript interfaces, enums, default settings
@@ -108,13 +109,15 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Technologies:** HTTP JSON-RPC 2.0, AnkiConnect v6 API
 
-**AnkiConnect actions used:** `version`, `createDeck`, `findNotes`, `notesInfo`, `addNote`, `updateNoteFields`, `updateNoteTags`, `deleteNotes`, `storeMediaFile`
+**AnkiConnect actions used:** `version`, `createDeck`, `findNotes`, `notesInfo`, `cardsInfo`, `changeDeck`, `addNote`, `updateNoteFields`, `updateNoteTags`, `deleteNotes`, `storeMediaFile`, `getMediaFilesNames`, `deleteMediaFile`
 
 ### 3.4. Source Tagging System
 
 **Name:** hashUtils + source tags
 
 **Description:** Each synced note gets an Anki tag like `source:folder_note_<7char_hash>` (FNV-1a hash of the vault file path, encoded as 7-char base-36). This scopes deletion and update detection to individual source files, allowing multiple notes targeting the same Anki deck without interference.
+
+**Rename and move flow:** `main.ts` registers a `vault.on('rename')` listener for Markdown files. A rename is appended to `settings.pendingTagMigrations` and saved before Anki is contacted, then flushed at once, on plugin load, and before every sync entry point. A flush first migrates the notes carrying the unique hashed source tag of the old path, so the note's current cards always move. The legacy tag is searched only when the usual eligibility rule trusts it and only in the deck the old path targets; candidates carrying another path's hashed `source:` tag are ignored. The rest must prove ownership by a unique card `Front` match against the renamed note's content (read from the file at its new path). If any candidate cannot be proven, or a question appears on more than one, no legacy tag is touched, the entry is cleared, and a notice warns that older cards may remain in Anki as orphans. Read or request failures keep the entry queued and block only that note. Migrated notes get the new hashed tag via `updateNoteTags` while keeping their other tags, and their cards move when the deck derived from the old path differs from the deck derived from the new path plus its `Deck::` override. Only cards still in the old derived deck are moved, so a hand-moved card stays where the user put it. A sync whose own note still has a queued migration is blocked with a notice, while unrelated notes keep syncing.
 
 **Technologies:** FNV-1a hashing, base-36 encoding
 
@@ -123,6 +126,8 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 **Name:** imageUtils
 
 **Description:** Resolves image paths from Obsidian vault (wikilinks, Markdown syntax, raw paths) or downloads from HTTP(S). Converts to base64, removes data URI prefix, and uploads to Anki's media collection via `storeMediaFile`. Dual FNV-like hash (14 characters) in filenames prevents collisions. Rejects files larger than 10 MB.
+
+**Orphaned media cleanup:** The "Clean up orphaned media" command lists `pandazap_*` files with `getMediaFilesNames`, subtracts filenames referenced by any `panda-zap` note field (reading every field and only local `<img src>` names), then verifies each remaining candidate against all notes of the collection with a quoted `findNotes` search. Only verified orphans are shown in the confirmation modal. After the user confirms, the same verification runs again immediately before deletion, so a note or sync that references a candidate while the dialog is open keeps the file. A failed query aborts the run without deleting anything. Cleanup and sync are mutually exclusive: cleanup refuses to start while a sync dialog is open, and a sync dialog refuses to open during cleanup.
 
 **Technologies:** Obsidian `metadataCache`, `requestUrl`, base64 encoding
 

@@ -8,6 +8,7 @@ import {
   markerLabels,
   parseAnkiConnectUrl,
   parsePort,
+  restoreDefaultSettings,
   validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
@@ -117,7 +118,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
             render: (setting) => {
               setting.addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(() => {
-                  Object.assign(this.plugin.settings, DEFAULT_SETTINGS);
+                  Object.assign(this.plugin.settings, restoreDefaultSettings(this.plugin.settings));
                   void this.plugin
                     .saveSettings()
                     .then(() => {

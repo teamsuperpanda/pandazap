@@ -6,6 +6,7 @@ import {
   normalizeSettings,
   parseAnkiConnectUrl,
   parsePort,
+  restoreDefaultSettings,
   validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
@@ -45,7 +46,48 @@ describe('normalizeSettings', () => {
       noteType: 'Cloze',
       useNoteBased: false,
       boldQuestionInReadingMode: false,
+      pendingTagMigrations: [],
     });
+  });
+
+  it('keeps only complete rename pairs in the pending migration queue', () => {
+    const normalized = normalizeSettings({
+      pendingTagMigrations: [
+        { fromPath: 'old/a.md', toPath: 'new/a.md' },
+        { fromPath: ' old/b.md ', toPath: ' new/b.md ' },
+        { fromPath: 'old/c.md' },
+        { toPath: 'new/d.md' },
+        { fromPath: 1, toPath: 'new/e.md' },
+        { fromPath: 'old/f.md', toPath: 'old/f.md' },
+        { fromPath: '   ', toPath: 'new/g.md' },
+        'old/h.md',
+        null,
+      ],
+    });
+
+    expect(normalized.pendingTagMigrations).toEqual([
+      { fromPath: 'old/a.md', toPath: 'new/a.md' },
+      // A vault path is matched exactly, so surrounding spaces are kept.
+      { fromPath: ' old/b.md ', toPath: ' new/b.md ' },
+    ]);
+  });
+
+  it('drops a migration queue that is not an array', () => {
+    for (const value of [undefined, null, 'old.md', 3, {}]) {
+      expect(normalizeSettings({ pendingTagMigrations: value }).pendingTagMigrations).toEqual([]);
+    }
+  });
+
+  it('restores user defaults but keeps the pending migration queue', () => {
+    const queue = [{ fromPath: 'old/a.md', toPath: 'new/a.md' }];
+
+    expect(
+      restoreDefaultSettings({
+        ...DEFAULT_SETTINGS,
+        defaultDeck: 'Custom',
+        pendingTagMigrations: queue,
+      })
+    ).toEqual({ ...DEFAULT_SETTINGS, pendingTagMigrations: queue });
   });
 
   it('accepts a port stored as a numeric string', () => {
