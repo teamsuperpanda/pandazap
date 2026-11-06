@@ -1,6 +1,7 @@
 import { Modal, App } from 'obsidian';
 import { SyncAnalysis, CardSyncInfo, PandaZapSettings } from '../sync/types';
 import { markerLabels } from '../settings';
+import { CollapsibleSection } from './CollapsibleSection';
 
 export class PreviewModal extends Modal {
   private syncAnalysis: SyncAnalysis;
@@ -62,28 +63,12 @@ export class PreviewModal extends Modal {
     cards: CardSyncInfo[]
   ) {
     const section = container.createDiv('panda-zap-preview-section');
-    const sectionHeader = section.createDiv('panda-zap-section-header');
-    const toggleIcon = sectionHeader.createSpan({ cls: 'panda-zap-toggle-icon expanded' });
-    toggleIcon.textContent = '▼';
-    sectionHeader.createSpan({
-      text: `${title} (${cards.length})`,
-      cls: 'panda-zap-section-title',
+    const collapsible = new CollapsibleSection(section, {
+      title,
+      count: cards.length,
+      contentClasses: 'panda-zap-cards-container',
     });
-    const cardsContainer = section.createDiv('panda-zap-cards-container expanded');
-    sectionHeader.onclick = () => {
-      const isExpanded = toggleIcon.classList.contains('expanded');
-      if (isExpanded) {
-        toggleIcon.classList.remove('expanded');
-        toggleIcon.textContent = '▶';
-        cardsContainer.classList.remove('expanded');
-        cardsContainer.classList.add('collapsed');
-      } else {
-        toggleIcon.classList.add('expanded');
-        toggleIcon.textContent = '▼';
-        cardsContainer.classList.remove('collapsed');
-        cardsContainer.classList.add('expanded');
-      }
-    };
+    const cardsContainer = collapsible.contentEl;
     const labels = markerLabels(this.settings);
     cards.forEach((cardInfo, index) => {
       const cardElement = cardsContainer.createDiv(`panda-zap-card ${type}`);
