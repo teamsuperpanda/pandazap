@@ -18,6 +18,25 @@ export interface AnkiNoteInfo {
     [key: string]: { value: string } | undefined;
   };
   tags?: string[];
+  /** Card IDs generated from the note, used to find and move its deck. */
+  cards?: number[];
+}
+
+/** Shape of a single card returned by Anki Connect's cardsInfo action */
+export interface AnkiCardInfo {
+  cardId: number;
+  note?: number;
+  deckName?: string;
+}
+
+/**
+ * A renamed note whose Anki source tags still need migrating. Internal state,
+ * not a user setting: it is kept so a rename that happens while Anki is
+ * unreachable is retried instead of producing duplicate cards.
+ */
+export interface PendingTagMigration {
+  fromPath: string;
+  toPath: string;
 }
 
 /** Shape of the Anki Connect JSON response */
@@ -48,6 +67,7 @@ export interface PandaZapSettings {
   noteType: string;
   useNoteBased: boolean;
   boldQuestionInReadingMode: boolean;
+  pendingTagMigrations: PendingTagMigration[];
 }
 
 export enum CardAction {
@@ -317,4 +337,5 @@ export const DEFAULT_SETTINGS: PandaZapSettings = {
   noteType: 'Basic',
   useNoteBased: true,
   boldQuestionInReadingMode: true,
+  pendingTagMigrations: [],
 };

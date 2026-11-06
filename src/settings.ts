@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS } from './sync/types';
-import type { PandaZapSettings } from './sync/types';
+import type { PandaZapSettings, PendingTagMigration } from './sync/types';
 
 export const ANKI_CONNECT_PORT_MIN = 1;
 export const ANKI_CONNECT_PORT_MAX = 65535;
@@ -92,6 +92,25 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 /**
+ * Keeps only complete rename pairs. The queue is internal state, so a corrupt
+ * entry (a string, a half-written object, a non-string path) is dropped rather
+ * than repaired into a migration that would retag the wrong notes. Paths are
+ * kept verbatim because the source tag is derived from the exact string.
+ */
+function normalizePendingTagMigrations(value: unknown): PendingTagMigration[] {
+  if (!Array.isArray(value)) return [];
+  const migrations: PendingTagMigration[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const { fromPath, toPath } = entry;
+    if (typeof fromPath !== 'string' || typeof toPath !== 'string') continue;
+    if (!fromPath.trim() || !toPath.trim() || fromPath === toPath) continue;
+    migrations.push({ fromPath, toPath });
+  }
+  return migrations;
+}
+
+/**
  * Turns untrusted `data.json` content into a complete, valid settings object.
  * Unknown keys are dropped and every value is a known key with the expected type.
  */
@@ -114,6 +133,7 @@ export function normalizeSettings(raw: unknown): PandaZapSettings {
       source.boldQuestionInReadingMode,
       DEFAULT_SETTINGS.boldQuestionInReadingMode
     ),
+    pendingTagMigrations: normalizePendingTagMigrations(source.pendingTagMigrations),
   };
 }
 

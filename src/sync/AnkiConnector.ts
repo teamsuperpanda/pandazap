@@ -6,6 +6,7 @@ import {
   CardAction,
   CardSyncInfo,
   AnkiNoteInfo,
+  AnkiCardInfo,
   AnkiConnectResponse,
   NoteCacheEntry,
   AnkiConnectionState,
@@ -17,6 +18,7 @@ import {
 import {
   ANKI_CONNECT_VERSION,
   PLUGIN_TAG,
+  MEDIA_FILENAME_PREFIX,
   REQUEST_TIMEOUT_MS,
   RETRY_BACKOFF_BASE_MS,
 } from '../constants';
@@ -28,6 +30,7 @@ import {
   resolveImageSource,
   readImageFileToBase64,
   downloadImageToBase64,
+  extractMediaFilenames,
   getStoredMediaFilename,
   getStoredMediaFilenameForSource,
 } from './imageUtils';
@@ -466,6 +469,136 @@ export class AnkiConnector {
       tags: allTags,
     });
     cached.raw.tags = allTags;
+  }
+
+  /**
+   * Moves the notes saved under one vault path onto the source tag of another,
+   * so a renamed or moved note keeps the Anki notes it already has. Each note is
+   * retagged in place with its other tags intact, and moved to the deck the new
+   * path or its `Deck::` override targets when that differs from its current
+   * deck. Returns how many notes carried the old tag.
+   */
+  async migrateSourceTag(fromPath: string, toPath: string, toContent?: string): Promise<number> {
+    const fromTag = this.getSourceTag(fromPath);
+    const toTag = this.getSourceTag(toPath);
+    if (fromTag === toTag) return 0;
+
+    const noteIds = (await this.ankiConnectRequest('findNotes', {
+      query: `tag:${PLUGIN_TAG} tag:${fromTag}`,
+    })) as string[];
+    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
+    // No note carries the old tag, so there is nothing to migrate and the queue
+    // entry is finished.
+    if (noteIds.length === 0) return 0;
+
+    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
+      notes: noteIds,
+    })) as AnkiNoteInfo[];
+    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+
+    const targetDeck = this.getDeckName(toPath, toContent);
+    const cardsByNote = await this.fetchCardsByNote(notesInfo);
+
+    for (const note of notesInfo) {
+      const noteId = note.noteId ?? note.noteIds?.[0] ?? note.id ?? '';
+      if (!noteId) continue;
+
+      // The deck moves first. If the tag update then fails, the note still
+      // carries the old tag, so the retry finds it again; the other order would
+      // retag it and lose the pending deck move.
+      const cards = cardsByNote.get(noteId) ?? [];
+      const decks = cards
+        .map((card) => card.deckName)
+        .filter((deck): deck is string => Boolean(deck));
+      if (decks.length > 0 && decks.some((deck) => deck !== targetDeck)) {
+        await this.ankiConnectRequest('changeDeck', {
+          cards: cards.map((card) => card.cardId),
+          deck: targetDeck,
+        });
+      }
+
+      const tags = (note.tags ?? []).filter((tag) => tag !== fromTag);
+      if (!tags.includes(toTag)) tags.push(toTag);
+      await this.ankiConnectRequest('updateNoteTags', {
+        note: parseInt(noteId, 10),
+        tags,
+      });
+    }
+
+    // Tags and decks changed under the cached notes.
+    this.invalidateCache();
+    return notesInfo.length;
+  }
+
+  /** Card details per note, so a source tag migration can move decks. */
+  private async fetchCardsByNote(
+    notes: readonly AnkiNoteInfo[]
+  ): Promise<Map<string, AnkiCardInfo[]>> {
+    const byNote = new Map<string, AnkiCardInfo[]>();
+    const cardIds = new Set<number>();
+    for (const note of notes) {
+      const noteId = note.noteId ?? note.noteIds?.[0] ?? note.id ?? '';
+      if (!noteId) continue;
+      byNote.set(noteId, []);
+      for (const cardId of note.cards ?? []) {
+        if (typeof cardId === 'number') cardIds.add(cardId);
+      }
+    }
+    if (cardIds.size === 0) return byNote;
+
+    const cardsInfo = (await this.ankiConnectRequest('cardsInfo', {
+      cards: [...cardIds],
+    })) as AnkiCardInfo[];
+    if (!Array.isArray(cardsInfo)) throw new Error('Anki returned invalid card information');
+    for (const card of cardsInfo) {
+      if (typeof card?.note !== 'number') continue;
+      const entries = byNote.get(String(card.note));
+      if (entries) entries.push(card);
+    }
+    return byNote;
+  }
+
+  /** Every media file the plugin has uploaded to Anki. */
+  async getPluginMediaFiles(): Promise<string[]> {
+    const names = (await this.ankiConnectRequest('getMediaFilesNames', {
+      pattern: `${MEDIA_FILENAME_PREFIX}*`,
+    })) as string[];
+    if (!Array.isArray(names) || names.some((name) => typeof name !== 'string')) {
+      throw new Error('Anki returned invalid media file names');
+    }
+    return names;
+  }
+
+  /** Media filenames referenced by any field of any plugin-tagged note. */
+  async getReferencedMediaFiles(): Promise<Set<string>> {
+    const noteIds = (await this.ankiConnectRequest('findNotes', {
+      query: `tag:${PLUGIN_TAG}`,
+    })) as string[];
+    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
+    const referenced = new Set<string>();
+    if (noteIds.length === 0) return referenced;
+
+    const notesInfo = (await this.ankiConnectRequest('notesInfo', {
+      notes: noteIds,
+    })) as AnkiNoteInfo[];
+    if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
+    for (const note of notesInfo) {
+      for (const field of Object.values(note.fields ?? {})) {
+        if (!field || typeof field.value !== 'string') continue;
+        for (const name of extractMediaFilenames(field.value)) referenced.add(name);
+      }
+    }
+    return referenced;
+  }
+
+  /** Deletes the named files from Anki's media folder, returning how many went. */
+  async removeMediaFiles(filenames: readonly string[]): Promise<number> {
+    let deleted = 0;
+    for (const filename of filenames) {
+      await this.ankiConnectRequest('deleteMediaFile', { filename });
+      deleted += 1;
+    }
+    return deleted;
   }
 
   private async uploadImageToAnki(imagePath: string, notePath: string): Promise<string | null> {

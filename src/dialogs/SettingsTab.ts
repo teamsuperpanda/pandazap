@@ -117,7 +117,10 @@ export class PandaZapSettingTab extends PluginSettingTab {
             render: (setting) => {
               setting.addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(() => {
-                  Object.assign(this.plugin.settings, DEFAULT_SETTINGS);
+                  // The migration queue is internal state, so a reset must not
+                  // drop renames that still need applying to Anki.
+                  const { pendingTagMigrations } = this.plugin.settings;
+                  Object.assign(this.plugin.settings, DEFAULT_SETTINGS, { pendingTagMigrations });
                   void this.plugin
                     .saveSettings()
                     .then(() => {

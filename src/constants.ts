@@ -8,3 +8,5 @@ export const SYNC_PROGRESS_RENDER_INTERVAL_MS = 100;
 export const ANKI_CONNECT_DEFAULT_PORT = 8765;
 export const ANKI_CONNECT_DEFAULT_URL = 'http://127.0.0.1';
 export const PLUGIN_TAG = 'panda-zap';
+// Every file the plugin uploads to Anki's media folder starts with this prefix.
+export const MEDIA_FILENAME_PREFIX = 'pandazap_';

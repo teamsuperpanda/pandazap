@@ -10,6 +10,8 @@ vi.mock('obsidian', () => ({
   Plugin: class {},
   MarkdownView: class {},
   TFile: class {},
+  Modal: class {},
+  setIcon: () => undefined,
   Notice: class {
     constructor(message: string) {
       notices.push(message);
@@ -58,6 +60,7 @@ function createPlugin(
   const internals = plugin as unknown as {
     settings: PandaZapSettings;
     ankiConnector: ReturnType<typeof connectorStub>;
+    tagMigrationQueue: Promise<void>;
     app: {
       vault: {
         getAbstractFileByPath: (path: string) => unknown;
@@ -67,6 +70,7 @@ function createPlugin(
   };
   internals.settings = DEFAULT_SETTINGS;
   internals.ankiConnector = connector;
+  internals.tagMigrationQueue = Promise.resolve();
   internals.app = {
     vault: {
       getAbstractFileByPath: (path: string) => files.get(path)?.file ?? null,

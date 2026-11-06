@@ -30,6 +30,7 @@ describe('Types and Constants', () => {
       expect(DEFAULT_SETTINGS).toHaveProperty('noteType');
       expect(DEFAULT_SETTINGS).toHaveProperty('useNoteBased');
       expect(DEFAULT_SETTINGS).toHaveProperty('boldQuestionInReadingMode');
+      expect(DEFAULT_SETTINGS.pendingTagMigrations).toEqual([]);
     });
   });
 
