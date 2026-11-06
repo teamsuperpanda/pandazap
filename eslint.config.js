@@ -46,6 +46,10 @@ export default defineConfig([
       '@typescript-eslint': tseslint,
     },
     rules: {
+      '@typescript-eslint/no-misused-promises': 'error',
+      // The obsidianmd preset already enables this one; keep it explicit so the
+      // promise rules stay on if that preset changes.
+      '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/explicit-function-return-type': 'off',
