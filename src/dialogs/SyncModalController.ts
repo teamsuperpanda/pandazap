@@ -69,7 +69,9 @@ export type SyncRunOutcome =
   | { status: 'unavailable'; reason: 'connection' | 'analysis' }
   | { status: 'failed'; message: string }
   /** A run was already in flight, so the request was ignored. */
-  | { status: 'busy' };
+  | { status: 'busy' }
+  /** The dialog was closed while the request was still pending. */
+  | { status: 'disposed' };
 
 export interface SyncModalControllerOptions {
   /** Snapshot for single-note sync. Ignored in batch mode. */
@@ -116,6 +118,8 @@ export class SyncModalController {
   private lastRender = 0;
   /** True from the first sync request through confirmation and the run. */
   private requestPending = false;
+  /** Set when the view closes, so a parked request never mutates Anki. */
+  private disposed = false;
 
   constructor(options: SyncModalControllerOptions) {
     this.context = options.context;
@@ -241,6 +245,7 @@ export class SyncModalController {
       }
     }
 
+    if (this.disposed) return { status: 'disposed' };
     if (!this.hasAnythingToSync()) return { status: 'nothing-to-sync' };
 
     const deletions = this.collectDeletions(this.analysis);
@@ -251,6 +256,7 @@ export class SyncModalController {
         noteCount: this.isBatchMode ? deletions.noteCount : undefined,
         editedCount: deletions.editedCount,
       });
+      if (this.disposed) return { status: 'disposed' };
       if (!confirmed) return { status: 'deletion-cancelled' };
       deleteConfirmed = true;
     }
@@ -306,6 +312,15 @@ export class SyncModalController {
     return { status: 'completed', result };
   }
 
+  /**
+   * Detaches the controller from its view. A request parked on the deletion
+   * prompt must not start a run after the dialog is gone.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.cancelSync();
+  }
+
   /** Asks the run in flight to stop before the next Anki mutation. */
   cancelSync(): void {
     if (!this.abort || this.abort.cancelled) return;
@@ -332,10 +347,10 @@ export class SyncModalController {
     const notePaths = new Set<string>();
     const byNote = new Map<string, number[]>();
     for (const card of cards) {
-      if (card.existingCardId) ids.push(card.existingCardId);
+      if (card.existingCardId !== undefined) ids.push(card.existingCardId);
       if (!card.notePath) continue;
       notePaths.add(card.notePath);
-      if (!card.existingCardId) continue;
+      if (card.existingCardId === undefined) continue;
       const list = byNote.get(card.notePath) ?? [];
       list.push(card.existingCardId);
       byNote.set(card.notePath, list);

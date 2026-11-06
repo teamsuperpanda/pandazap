@@ -391,6 +391,7 @@ export class SyncModal extends Modal {
     if (this.closed) return;
     switch (outcome.status) {
       case 'busy':
+      case 'disposed':
         return;
       case 'unavailable':
         new Notice(
@@ -477,6 +478,7 @@ export class SyncModal extends Modal {
 
   onClose() {
     this.closed = true;
+    this.controller.dispose();
     this.plugin.clearActiveSyncModal(this);
     const { contentEl } = this;
     contentEl.empty();

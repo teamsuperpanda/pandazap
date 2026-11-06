@@ -56,10 +56,18 @@ export function parseMediaName(value: unknown): string {
   return value;
 }
 
+/**
+ * Anki answers `{}` for an ID that no longer exists between a lookup and its
+ * info read, so an empty entry means the note or card is gone, not malformed.
+ */
+function isPresent(entry: unknown): boolean {
+  return !isRecord(entry) || Object.keys(entry).length > 0;
+}
+
 /** Notes returned by `notesInfo`. */
 export function parseNotesInfo(value: unknown): AnkiNoteInfo[] {
   if (!Array.isArray(value)) throw invalid('note information');
-  return value.map((entry) => {
+  return value.filter(isPresent).map((entry) => {
     if (!isRecord(entry) || !isInteger(entry.noteId) || !isFields(entry.fields)) {
       throw invalid('note information');
     }
@@ -79,7 +87,7 @@ export function parseNotesInfo(value: unknown): AnkiNoteInfo[] {
 /** Cards returned by `cardsInfo`. */
 export function parseCardsInfo(value: unknown): AnkiCardInfo[] {
   if (!Array.isArray(value)) throw invalid('card information');
-  return value.map((entry) => {
+  return value.filter(isPresent).map((entry) => {
     if (!isRecord(entry) || !isInteger(entry.cardId)) throw invalid('card information');
     const card: AnkiCardInfo = { cardId: entry.cardId };
     if (entry.note !== undefined) {

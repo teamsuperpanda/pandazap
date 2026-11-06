@@ -39,6 +39,11 @@ describe('AnkiConnect response parsers', () => {
     ]);
   });
 
+  it('drops entries Anki returned as empty for IDs that no longer exist', () => {
+    expect(parseNotesInfo([{}, { noteId: 7, fields: {} }])).toEqual([{ noteId: 7, fields: {} }]);
+    expect(parseCardsInfo([{}, { cardId: 3 }])).toEqual([{ cardId: 3 }]);
+  });
+
   it('rejects a note ID list that is not made of numbers', () => {
     expect(() => parseNoteIds('11')).toThrow('Anki returned invalid note IDs');
     expect(() => parseNoteIds(['11'])).toThrow('Anki returned invalid note IDs');
