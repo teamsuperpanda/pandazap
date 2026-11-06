@@ -1,6 +1,6 @@
 import { App, TFile, requestUrl } from 'obsidian';
 import { stableHash } from './hashUtils';
-import { REQUEST_TIMEOUT_MS } from '../constants';
+import { IMAGE_DOWNLOAD_TIMEOUT_MS } from '../constants';
 import { withTimeout } from './requestTimeout';
 
 /**
@@ -131,7 +131,8 @@ export async function downloadImageToBase64(url: string): Promise<string> {
   try {
     const response = await withTimeout(
       requestUrl({ url, method: 'GET', throw: false }),
-      `Image download from ${url} timed out after ${REQUEST_TIMEOUT_MS} ms. Check the image URL and your network connection.`
+      `Image download from ${url} timed out after ${IMAGE_DOWNLOAD_TIMEOUT_MS} ms. Check the image URL and your network connection.`,
+      IMAGE_DOWNLOAD_TIMEOUT_MS
     );
 
     if (response.status >= 400) {

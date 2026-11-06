@@ -10,7 +10,12 @@ vi.mock('obsidian', () => ({
 
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import { getStoredMediaFilename } from '../src/sync/imageUtils';
-import { DEFAULT_SETTINGS, formatSyncResult, type AnkiNoteInfo } from '../src/sync/types';
+import {
+  DEFAULT_SETTINGS,
+  describeConnection,
+  formatSyncResult,
+  type AnkiNoteInfo,
+} from '../src/sync/types';
 import { REQUEST_TIMEOUT_MS, RETRY_BACKOFF_BASE_MS } from '../src/constants';
 
 const settings = { ...DEFAULT_SETTINGS, useNoteBased: true };
@@ -83,11 +88,38 @@ describe('AnkiConnector', () => {
   });
 
   it('reports an unreachable connection when the request fails at the network level', async () => {
-    vi.stubGlobal('window', { setTimeout: (callback: () => void) => callback() });
-    requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
-    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
-      status: 'unreachable',
-    });
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
+      const status = new AnkiConnector(settings, app).testConnection();
+
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MS * 8);
+
+      expect(await status).toEqual({ status: 'unreachable' });
+      expect(requestUrl).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports an unreachable connection when the version probe times out', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockImplementation(() => never());
+      const connector = new AnkiConnector(settings, app);
+      const status = connector.testConnection();
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS * 3 + RETRY_BACKOFF_BASE_MS * 4);
+
+      const connection = await status;
+      expect(connection).toEqual({
+        status: 'unreachable',
+        detail: 'Timed out after 5000 ms.',
+      });
+      expect(describeConnection(connection, 6)).toContain('Timed out after 5000 ms.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports an AnkiConnect version that is too old', async () => {
@@ -565,7 +597,7 @@ describe('AnkiConnector', () => {
     expect(deckLookups('Default')).toHaveLength(2);
   });
 
-  it('re-queries Anki after a sync run completes', async () => {
+  it('re-queries Anki after the caller invalidates the cache following a sync run', async () => {
     const connector = new AnkiConnector(deckSettings, app);
     const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
       'mine.md'
@@ -580,10 +612,44 @@ describe('AnkiConnector', () => {
 
     const cards = [{ question: 'Q', answer: 'A', line: 1 }];
     await connector.syncCards(cards, false, 'mine.md');
+    // main.ts clears the cache once after syncCardsToAnki returns.
+    connector.invalidateCache();
     await connector.syncCards(cards, false, 'mine.md');
 
     expect(deckLookups('Default')).toHaveLength(2);
     expect(requests('notesInfo')).toHaveLength(2);
+  });
+
+  it('keeps one deck lookup across a shared-deck batch', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      if (request.action === 'addNote') return response('1');
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const content = 'Deck:: Shared\nQ: Q\nA: A';
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.syncCards(cards, false, 'one.md', content);
+    await connector.syncCards(cards, false, 'two.md', content);
+
+    expect(deckLookups('Shared')).toHaveLength(1);
+    expect(requests('addNote')).toHaveLength(2);
+  });
+
+  it('does not retry a non-idempotent request after a network error', async () => {
+    requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
+    const connector = new AnkiConnector(settings, app);
+    const request = (
+      connector as unknown as {
+        ankiConnectRequest(action: string): Promise<unknown>;
+      }
+    ).ankiConnectRequest('addNote');
+
+    await expect(request).rejects.toThrow('Failed to fetch');
+    expect(requestUrl).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a non-idempotent request once the timeout elapses', async () => {

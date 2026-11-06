@@ -11,7 +11,7 @@ import {
   readImageFileToBase64,
   resolveImageSource,
 } from '../src/sync/imageUtils';
-import { REQUEST_TIMEOUT_MS } from '../src/constants';
+import { IMAGE_DOWNLOAD_TIMEOUT_MS } from '../src/constants';
 import type { App, TFile } from 'obsidian';
 
 describe('sanitizeMediaFilename', () => {
@@ -123,10 +123,10 @@ describe('downloadImageToBase64', () => {
       requestUrl.mockImplementation(() => new Promise<never>(() => {}));
       const request = downloadImageToBase64('https://example.com/image.png');
       const rejection = expect(request).rejects.toThrow(
-        /Image download from https:\/\/example.com\/image.png timed out after 5000 ms.*network connection/
+        /Image download from https:\/\/example.com\/image.png timed out after 30000 ms.*network connection/
       );
 
-      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(IMAGE_DOWNLOAD_TIMEOUT_MS);
       await rejection;
       expect(vi.getTimerCount()).toBe(0);
     } finally {

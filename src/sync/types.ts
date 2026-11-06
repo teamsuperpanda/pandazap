@@ -109,20 +109,28 @@ export type AnkiConnectionStatus = 'ok' | 'unreachable' | 'version-too-old' | 'p
 export interface AnkiConnectionState {
   status: AnkiConnectionStatus;
   version?: number;
+  /** Extra user-facing detail for a failure, such as a request timeout. */
+  detail?: string;
 }
 
 /** Single source of user-facing wording for every connection state. */
 export function describeConnection(state: AnkiConnectionState, requiredVersion: number): string {
+  let message: string;
   switch (state.status) {
     case 'ok':
       return 'Connected to AnkiConnect';
     case 'version-too-old':
-      return `AnkiConnect ${state.version ?? 'unknown'} is too old. Panda Zap requires AnkiConnect ${requiredVersion} or newer.`;
+      message = `AnkiConnect ${state.version ?? 'unknown'} is too old. Panda Zap requires AnkiConnect ${requiredVersion} or newer.`;
+      break;
     case 'protocol-error':
-      return 'AnkiConnect returned an unexpected response. Check the URL and port.';
+      message = 'AnkiConnect returned an unexpected response. Check the URL and port.';
+      break;
     case 'unreachable':
-      return 'Cannot reach AnkiConnect. Make sure Anki is running with the AnkiConnect addon installed.';
+      message =
+        'Cannot reach AnkiConnect. Make sure Anki is running with the AnkiConnect addon installed.';
+      break;
   }
+  return state.detail ? `${message} ${state.detail}` : message;
 }
 
 export interface SyncModalStatus {

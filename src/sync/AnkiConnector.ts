@@ -69,6 +69,10 @@ export class AnkiConnector {
       if (version < ANKI_CONNECT_VERSION) return { status: 'version-too-old', version };
       return { status: 'ok', version };
     } catch (e: unknown) {
+      if (isTimeoutError(e)) {
+        console.warn('PandaZap: connection test timed out', e);
+        return { status: 'unreachable', detail: `Timed out after ${REQUEST_TIMEOUT_MS} ms.` };
+      }
       if (isNetworkError(e)) return { status: 'unreachable' };
       console.warn('PandaZap: connection test failed', e);
       return { status: 'protocol-error' };
@@ -331,10 +335,6 @@ export class AnkiConnector {
         result.deletion = { deletedCount: 0, failed: true, reason: msg };
       }
     }
-
-    // A sync run writes notes, so drop the cache to re-read Anki on the next
-    // user action (covers edits made directly in Anki in between).
-    this.invalidateCache();
 
     return result;
   }
@@ -610,7 +610,7 @@ export class AnkiConnector {
     const timeoutMessage = `Anki Connect request "${action}" timed out after ${REQUEST_TIMEOUT_MS} ms. Make sure Anki is running with the AnkiConnect addon and that ${url} is reachable.`;
 
     const MAX_RETRIES = 2;
-    const canRetryAfterTimeout = action !== 'addNote' && action !== 'storeMediaFile';
+    const isIdempotent = action !== 'addNote' && action !== 'storeMediaFile';
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -643,9 +643,8 @@ export class AnkiConnector {
         }
         return data.result;
       } catch (error: unknown) {
-        const isTimeout = error instanceof Error && error.name === 'TimeoutError';
         const shouldRetry =
-          (isNetworkError(error) || (isTimeout && canRetryAfterTimeout)) && attempt < MAX_RETRIES;
+          (isNetworkError(error) || isTimeoutError(error)) && isIdempotent && attempt < MAX_RETRIES;
         if (shouldRetry) {
           const backoff = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt);
           await this.sleep(backoff + Math.random() * (RETRY_BACKOFF_BASE_MS * 0.15));
@@ -664,6 +663,10 @@ function isNetworkError(error: unknown): boolean {
       error.message === 'Failed to fetch' ||
       error.message.includes('net::'))
   );
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
 }
 
 function normalizeField(s: string): string {
