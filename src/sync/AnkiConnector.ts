@@ -24,8 +24,7 @@ import {
   RETRY_BACKOFF_BASE_MS,
 } from '../constants';
 import { buildAnkiConnectUrl } from '../settings';
-import { escapeRegex } from './markers';
-import { extractQACardsFromText } from './extractionUtils';
+import { extractDeckOverride, extractQACardsFromText } from './extractionUtils';
 import { stableHash } from './hashUtils';
 import { withTimeout } from './requestTimeout';
 import {
@@ -85,6 +84,25 @@ export class AnkiConnector {
       console.warn('PandaZap: connection test failed', e);
       return { status: 'protocol-error' };
     }
+  }
+
+  /**
+   * Every deck name Anki knows, for the settings picker. Read-only, so the
+   * shared request helper retries it on a network error or timeout.
+   */
+  async listDeckNames(): Promise<string[]> {
+    return this.listNames('deckNames', 'deck');
+  }
+
+  /** Every note type (model) name Anki knows, for the settings picker. */
+  async listModelNames(): Promise<string[]> {
+    return this.listNames('modelNames', 'note type');
+  }
+
+  private async listNames(action: 'deckNames' | 'modelNames', label: string): Promise<string[]> {
+    const names = await this.ankiConnectRequest(action);
+    if (!isStringArray(names)) throw new Error(`Anki returned invalid ${label} names`);
+    return names;
   }
 
   async analyzeSyncOperation(
@@ -911,12 +929,8 @@ export class AnkiConnector {
   }
 
   private getDeckOverride(noteContent?: string): string | undefined {
-    if (!noteContent || !this.settings.deckOverrideWord) return undefined;
-    const nl = noteContent.indexOf('\n');
-    const firstLine = (nl === -1 ? noteContent : noteContent.slice(0, nl)).replace(/\r$/, '');
-    const esc = escapeRegex(this.settings.deckOverrideWord);
-    const match = firstLine.match(new RegExp(`^${esc}::\\s*(.+)$`, 'i'));
-    return match?.[1]?.trim().replace(/\//g, '::') || undefined;
+    if (!noteContent) return undefined;
+    return extractDeckOverride(noteContent, this.settings.deckOverrideWord);
   }
 
   private sleep(ms: number) {
@@ -994,6 +1008,10 @@ function isNetworkError(error: unknown): boolean {
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.name === 'TimeoutError';
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 function normalizeField(s: string): string {

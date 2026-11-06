@@ -676,6 +676,16 @@ export default class PandaZapPlugin extends Plugin {
     return (await this.testAnkiConnectionStatus()).status === 'ok';
   }
 
+  /** Deck and note type names for the settings pickers. */
+  async listAnkiNames(): Promise<{ deckNames: string[]; modelNames: string[] }> {
+    this.ankiConnector.updateSettings(this.settings);
+    const [deckNames, modelNames] = await Promise.all([
+      this.ankiConnector.listDeckNames(),
+      this.ankiConnector.listModelNames(),
+    ]);
+    return { deckNames, modelNames };
+  }
+
   /**
    * Retags the Anki notes of renamed files that are still queued. Entries are
    * processed independently, so one poisoned rename cannot hold up the rest;

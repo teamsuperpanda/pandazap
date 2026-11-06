@@ -109,7 +109,7 @@ Panda Zap converts Markdown notes from the Obsidian vault into Anki flashcards. 
 
 **Technologies:** HTTP JSON-RPC 2.0, AnkiConnect v6 API
 
-**AnkiConnect actions used:** `version`, `createDeck`, `findNotes`, `notesInfo`, `cardsInfo`, `changeDeck`, `addNote`, `updateNoteFields`, `updateNoteTags`, `deleteNotes`, `storeMediaFile`, `getMediaFilesNames`, `deleteMediaFile`
+**AnkiConnect actions used:** `version`, `createDeck`, `deckNames`, `modelNames`, `findNotes`, `notesInfo`, `cardsInfo`, `changeDeck`, `addNote`, `updateNoteFields`, `updateNoteTags`, `deleteNotes`, `storeMediaFile`, `getMediaFilesNames`, `deleteMediaFile`
 
 ### 3.4. Source Tagging System
 
