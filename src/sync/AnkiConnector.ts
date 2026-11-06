@@ -475,15 +475,15 @@ export class AnkiConnector {
 
   /**
    * Moves the notes saved under one vault path onto the source tag of another,
-   * so a renamed or moved note keeps the Anki notes it already has. Each note is
-   * retagged in place with its other tags intact, and moved to the deck the new
-   * path or its `Deck::` override targets when that differs from the deck the
-   * old path or override targeted.
+   * so a renamed or moved note keeps the Anki notes it already has.
    *
-   * The hashed tag is unique per path, so it is trusted as is. The legacy tag is
-   * truncated to 80 characters, so deep siblings can share it: those candidates
-   * must be deck-scoped to the old path's deck and prove ownership by matching a
-   * card Front of the renamed note, or nothing is migrated.
+   * The hashed tag is unique per path, so those notes are migrated first and
+   * always. The legacy tag is truncated to 80 characters and can be shared by
+   * deep siblings, so it is searched only when a normal sync would trust it, in
+   * the deck the old path targets, and a candidate is migrated only when it has
+   * no other path's source tag and its `Front` uniquely matches a card of the
+   * renamed note. When that proof fails nothing legacy is touched and the caller
+   * is told those older cards may now be orphans.
    */
   async migrateSourceTag(
     fromPath: string,
@@ -492,16 +492,18 @@ export class AnkiConnector {
   ): Promise<SourceTagMigrationResult> {
     const toTag = this.getSourceTag(toPath);
     const hashedOldTag = this.getSourceTag(fromPath);
-    if (hashedOldTag === toTag) return { migrated: 0, unidentified: false };
+    if (hashedOldTag === toTag) return { migrated: 0, unresolvedLegacy: false };
     const legacyOldTag = this.getLegacySourceTag(fromPath);
     // A rename does not edit the note, so the renamed file's content is also the
     // old content and its `Deck::` override applies to the old path.
     const oldDeck = this.getDeckName(fromPath, toContent);
     const newDeck = this.getDeckName(toPath, toContent);
     // Same rule a normal sync uses before trusting a truncated legacy tag.
-    const searchLegacy = this.getEligibleSourceTags(fromPath, this.getDeckName(fromPath)).includes(
-      legacyOldTag
-    );
+    const searchLegacy = this.getEligibleSourceTags(
+      fromPath,
+      this.getDeckName(fromPath, toContent),
+      toContent
+    ).includes(legacyOldTag);
 
     const ownedIds = new Set(await this.findPluginNotes(`tag:${PLUGIN_TAG} tag:${hashedOldTag}`));
     // The legacy tag can name several deep siblings, so only the deck the old
@@ -511,76 +513,91 @@ export class AnkiConnector {
       : [];
 
     const allIds = [...new Set([...ownedIds, ...legacyIds])];
-    if (allIds.length === 0) return { migrated: 0, unidentified: false };
+    if (allIds.length === 0) return { migrated: 0, unresolvedLegacy: false };
 
     const notesInfo = (await this.ankiConnectRequest('notesInfo', {
       notes: allIds,
     })) as AnkiNoteInfo[];
     if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
 
-    const legacyCandidates = notesInfo.filter(
-      (note) => legacyIds.includes(ankiNoteId(note)) && note.tags?.includes(legacyOldTag)
-    );
-    const questions = this.noteQuestionKeys(toContent);
-    const matchedLegacy = legacyCandidates.filter((note) =>
-      questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
-    );
-    // A question carried by two legacy candidates cannot decide which note is
-    // the renamed one's, so migrating either could hijack a sibling.
-    const ambiguous = this.hasAmbiguousLegacyCandidate(legacyCandidates, ownedIds, questions);
-    if (legacyCandidates.length > 0 && (matchedLegacy.length === 0 || ambiguous)) {
-      return { migrated: 0, unidentified: true };
-    }
-
-    const matchedIds = new Set(matchedLegacy.map(ankiNoteId));
-    const migrationTargets = notesInfo.filter(
-      (note) => ownedIds.has(ankiNoteId(note)) || matchedIds.has(ankiNoteId(note))
-    );
-    if (migrationTargets.length === 0) return { migrated: 0, unidentified: false };
-
     const defaultDeckMode = !this.settings.useNoteBased && !this.getDeckOverride(toContent);
-    const moveDeck = !defaultDeckMode && oldDeck !== newDeck;
-    const cardsByNote = await this.fetchCardsByNote(migrationTargets);
+    const migrationOptions = {
+      oldDeck,
+      newDeck,
+      moveDeck: !defaultDeckMode && oldDeck !== newDeck,
+      toTag,
+      removeTags: [hashedOldTag, legacyOldTag],
+    };
 
-    for (const note of migrationTargets) {
-      const noteId = ankiNoteId(note);
-      if (!noteId) continue;
+    // Trusted hashed notes are migrated before the legacy attempt, so a legacy
+    // problem never leaves the note's current cards behind.
+    const ownedNotes = notesInfo.filter((note) => ownedIds.has(ankiNoteId(note)));
+    let migrated = await this.applySourceTagMigration(ownedNotes, migrationOptions);
 
-      // The deck moves first. If the tag update then fails, the note still
-      // carries the old tag, so the retry finds it again; the other order would
-      // retag it and lose the pending deck move. Only cards still in the deck the
-      // old path targeted are moved, so a card the user moved by hand stays put.
-      if (moveDeck) {
-        const cards = cardsByNote.get(noteId) ?? [];
-        const cardsToMove = cards
-          .filter((card) => card.deckName === oldDeck)
-          .map((card) => card.cardId);
-        if (cardsToMove.length > 0) {
-          await this.ankiConnectRequest('changeDeck', {
-            cards: cardsToMove,
-            deck: newDeck,
-          });
-        }
-      }
+    const legacyCandidates = this.legacyOwnershipCandidates(
+      notesInfo,
+      legacyIds,
+      hashedOldTag,
+      legacyOldTag
+    );
+    if (legacyCandidates.length === 0) return { migrated, unresolvedLegacy: false };
 
-      const tags = (note.tags ?? []).filter((tag) => tag !== hashedOldTag && tag !== legacyOldTag);
-      if (!tags.includes(toTag)) tags.push(toTag);
-      await this.ankiConnectRequest('updateNoteTags', {
-        note: Number(noteId),
-        tags,
-      });
-    }
+    const questions = this.noteQuestionKeys(toContent);
+    const frontMatches = this.legacyFrontMatches(legacyCandidates, questions);
+    // A question carried by more than one candidate cannot decide which note is
+    // the renamed one's, so migrating any of them could hijack a sibling. A
+    // candidate that is neither the note's own hashed note nor provably its by
+    // Front is equally undecidable: it could be a stale card of this note.
+    const ambiguous = [...frontMatches.values()].some((count) => count > 1);
+    const undecidable = legacyCandidates.some(
+      (note) =>
+        !ownedIds.has(ankiNoteId(note)) &&
+        !questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
+    );
+    if (ambiguous || undecidable) return { migrated, unresolvedLegacy: true };
 
-    // Tags and decks changed under the cached notes.
-    this.invalidateCache();
-    return { migrated: migrationTargets.length, unidentified: false };
+    const legacyTargets = legacyCandidates.filter(
+      (note) =>
+        !ownedIds.has(ankiNoteId(note)) &&
+        questions.has(normalizeHtmlField(note.fields?.Front?.value ?? ''))
+    );
+    migrated += await this.applySourceTagMigration(legacyTargets, migrationOptions);
+    return { migrated, unresolvedLegacy: false };
   }
 
-  /** Note IDs matching one AnkiConnect query, as strings. */
-  private async findPluginNotes(query: string): Promise<string[]> {
-    const found = (await this.ankiConnectRequest('findNotes', { query })) as Array<string | number>;
-    if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
-    return found.map(String);
+  /**
+   * Notes the legacy tag could refer to: carrying the legacy tag, found in the
+   * old path's deck, and not already claimed by another path's hashed tag.
+   */
+  private legacyOwnershipCandidates(
+    notes: readonly AnkiNoteInfo[],
+    legacyIds: readonly string[],
+    hashedOldTag: string,
+    legacyOldTag: string
+  ): AnkiNoteInfo[] {
+    const ids = new Set(legacyIds);
+    return notes.filter((note) => {
+      if (!ids.has(ankiNoteId(note)) || !note.tags?.includes(legacyOldTag)) return false;
+      // A note with a source tag of its own belongs to a different note, even
+      // when it also carries this legacy tag.
+      return !note.tags?.some(
+        (tag) => tag.startsWith('source:') && tag !== hashedOldTag && tag !== legacyOldTag
+      );
+    });
+  }
+
+  /** How many legacy candidates carry each of the renamed note's questions. */
+  private legacyFrontMatches(
+    candidates: readonly AnkiNoteInfo[],
+    questions: ReadonlySet<string>
+  ): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const note of candidates) {
+      const question = normalizeHtmlField(note.fields?.Front?.value ?? '');
+      if (!questions.has(question)) continue;
+      counts.set(question, (counts.get(question) ?? 0) + 1);
+    }
+    return counts;
   }
 
   /** Normalised Front fields of the cards a renamed note contains. */
@@ -593,23 +610,59 @@ export class AnkiConnector {
     );
   }
 
-  /**
-   * True when a question of the renamed note appears on more than one legacy
-   * candidate that has no hashed tag, which makes ownership undecidable.
-   */
-  private hasAmbiguousLegacyCandidate(
-    legacyCandidates: readonly AnkiNoteInfo[],
-    ownedIds: ReadonlySet<string>,
-    questions: ReadonlySet<string>
-  ): boolean {
-    const counts = new Map<string, number>();
-    for (const note of legacyCandidates) {
-      if (ownedIds.has(ankiNoteId(note))) continue;
-      const question = normalizeHtmlField(note.fields?.Front?.value ?? '');
-      if (!questions.has(question)) continue;
-      counts.set(question, (counts.get(question) ?? 0) + 1);
+  /** Note IDs matching one AnkiConnect query, as strings. */
+  private async findPluginNotes(query: string): Promise<string[]> {
+    const found = (await this.ankiConnectRequest('findNotes', { query })) as Array<string | number>;
+    if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
+    return found.map(String);
+  }
+
+  /** Retags the given notes and moves the cards still in the old deck. */
+  private async applySourceTagMigration(
+    notes: readonly AnkiNoteInfo[],
+    options: {
+      oldDeck: string;
+      newDeck: string;
+      moveDeck: boolean;
+      toTag: string;
+      removeTags: readonly string[];
     }
-    return [...counts.values()].some((count) => count > 1);
+  ): Promise<number> {
+    if (notes.length === 0) return 0;
+    const cardsByNote = await this.fetchCardsByNote(notes);
+
+    for (const note of notes) {
+      const noteId = ankiNoteId(note);
+      if (!noteId) continue;
+
+      // The deck moves first. If the tag update then fails, the note still
+      // carries the old tag, so the retry finds it again; the other order would
+      // retag it and lose the pending deck move. Only cards still in the deck the
+      // old path targeted are moved, so a card the user moved by hand stays put.
+      if (options.moveDeck) {
+        const cards = cardsByNote.get(noteId) ?? [];
+        const cardsToMove = cards
+          .filter((card) => card.deckName === options.oldDeck)
+          .map((card) => card.cardId);
+        if (cardsToMove.length > 0) {
+          await this.ankiConnectRequest('changeDeck', {
+            cards: cardsToMove,
+            deck: options.newDeck,
+          });
+        }
+      }
+
+      const tags = (note.tags ?? []).filter((tag) => !options.removeTags.includes(tag));
+      if (!tags.includes(options.toTag)) tags.push(options.toTag);
+      await this.ankiConnectRequest('updateNoteTags', {
+        note: Number(noteId),
+        tags,
+      });
+    }
+
+    // Tags and decks changed under the cached notes.
+    this.invalidateCache();
+    return notes.length;
   }
 
   /** Card details per note, so a source tag migration can move decks. */

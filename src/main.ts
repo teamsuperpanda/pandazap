@@ -16,9 +16,8 @@ import {
   SyncResult,
   SyncRunOptions,
   AnkiConnectionState,
-  PendingTagMigrationFailure,
+  PendingTagMigration,
   SourceTagMigrationResult,
-  TagMigrationFailureReason,
   describeConnection,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
@@ -227,10 +226,10 @@ export default class PandaZapPlugin extends Plugin {
    * run. Returns the migrations that are still pending with why, so a caller can
    * block the syncs that would duplicate them.
    */
-  flushPendingTagMigrations(): Promise<PendingTagMigrationFailure[]> {
+  flushPendingTagMigrations(): Promise<PendingTagMigration[]> {
     // Renames and sync entry points can ask at the same time, so runs are
     // serialised and each one sees the queue the previous run left behind.
-    const flush: Promise<PendingTagMigrationFailure[]> = this.tagMigrationQueue.then(() =>
+    const flush: Promise<PendingTagMigration[]> = this.tagMigrationQueue.then(() =>
       this.runPendingTagMigrations()
     );
     this.tagMigrationQueue = flush.then(
@@ -240,9 +239,9 @@ export default class PandaZapPlugin extends Plugin {
     return flush;
   }
 
-  private async runPendingTagMigrations(): Promise<PendingTagMigrationFailure[]> {
+  private async runPendingTagMigrations(): Promise<PendingTagMigration[]> {
     const pending = [...this.settings.pendingTagMigrations];
-    const failed: PendingTagMigrationFailure[] = [];
+    const failed: PendingTagMigration[] = [];
     if (pending.length === 0) return failed;
     // The queue entry is on disk before the first Anki mutation, so a crash
     // mid-migration cannot lose a rename.
@@ -256,7 +255,7 @@ export default class PandaZapPlugin extends Plugin {
 
     for (const migration of pending) {
       if (unsettled.has(migration.fromPath)) {
-        failed.push({ migration, reason: 'failed' });
+        failed.push(migration);
         unsettled.add(migration.toPath);
         continue;
       }
@@ -267,7 +266,13 @@ export default class PandaZapPlugin extends Plugin {
         try {
           content = await this.app.vault.read(file);
         } catch (error: unknown) {
+          // Without the content the legacy cards cannot be proven, and nothing
+          // was written yet, so keep the entry and retry once the note is
+          // readable again.
           console.warn('PandaZap: could not read renamed note', migration.toPath, error);
+          failed.push(migration);
+          unsettled.add(migration.toPath);
+          continue;
         }
       }
 
@@ -282,17 +287,15 @@ export default class PandaZapPlugin extends Plugin {
         // The old tag is still on the notes, so syncing them now would duplicate
         // them. Keep the entry and try the unrelated entries after it.
         console.warn('PandaZap: source tag migration failed', migration.toPath, error);
-        failed.push({ migration, reason: 'failed' });
+        failed.push(migration);
         unsettled.add(migration.toPath);
         continue;
       }
 
-      if (result.unidentified) {
-        // Legacy-tagged notes matched, but none could be proven to belong to
-        // this note, so nothing was touched and the entry needs the user.
-        failed.push({ migration, reason: 'unidentified' });
-        unsettled.add(migration.toPath);
-        continue;
+      if (result.unresolvedLegacy) {
+        // Older legacy cards could not be proven to belong to this note. They
+        // stay in Anki as possible orphans, but that must not block the note.
+        new Notice(describeOrphanedLegacy(migration.toPath));
       }
 
       this.settings.pendingTagMigrations = this.settings.pendingTagMigrations.filter(
@@ -329,16 +332,7 @@ export default class PandaZapPlugin extends Plugin {
       });
     }
 
-    // A rename whose legacy notes cannot be identified is reported here, while
-    // the user is still looking at the note they just renamed.
-    const flush = this.flushPendingTagMigrations();
-    void flush.then((failed) => {
-      const unresolved = failed.some(
-        (failure) => failure.reason === 'unidentified' && failure.migration.toPath === toPath
-      );
-      if (unresolved) new Notice(describeTagMigrationFailure(toPath, 'unidentified'));
-    });
-    return flush.then(() => undefined);
+    return this.flushPendingTagMigrations().then(() => undefined);
   }
 
   /**
@@ -351,10 +345,10 @@ export default class PandaZapPlugin extends Plugin {
   ): Promise<void> {
     const failed = await this.flushPendingTagMigrations();
     const targets = new Set(targetPaths.filter((path): path is string => Boolean(path)));
-    const blocking = failed.find((failure) => targets.has(failure.migration.toPath));
+    const blocking = failed.find((migration) => targets.has(migration.toPath));
     if (!blocking) return;
 
-    const message = describeTagMigrationFailure(blocking.migration.toPath, blocking.reason);
+    const message = describeTagMigrationFailure(blocking.toPath);
     new Notice(message);
     throw new Error(message);
   }
@@ -640,11 +634,12 @@ export default class PandaZapPlugin extends Plugin {
 /** How many orphan names the confirmation lists before summarising the rest. */
 const MEDIA_PREVIEW_LIMIT = 5;
 
-function describeTagMigrationFailure(notePath: string, reason: TagMigrationFailureReason): string {
-  if (reason === 'unidentified') {
-    return `Could not identify the old Anki cards of renamed note "${notePath}". Check that its card questions are unchanged, then retry the sync.`;
-  }
+function describeTagMigrationFailure(notePath: string): string {
   return `Could not update Anki for renamed note "${notePath}". Connect to Anki and retry the sync.`;
+}
+
+function describeOrphanedLegacy(notePath: string): string {
+  return `Older Anki cards of renamed note "${notePath}" could not be identified and may remain in Anki as orphans.`;
 }
 
 function plural(count: number, noun: string): string {

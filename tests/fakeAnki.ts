@@ -57,6 +57,11 @@ function decksOf(state: FakeAnkiState, note: FakeNote): string[] {
     .map((card) => card.deckName);
 }
 
+/** Anki's `deck:"X"` matches X and its subdecks. */
+function isInDeck(deckName: string, query: string): boolean {
+  return deckName === query || deckName.startsWith(`${query}::`);
+}
+
 export function installFakeAnki(
   requestUrl: RequestUrlMock,
   initial: Partial<Pick<FakeAnkiState, 'notes' | 'cards' | 'media'>> = {}
@@ -99,7 +104,7 @@ export function installFakeAnki(
           state.notes
             .filter((note) => tags.every((tag) => note.tags.includes(tag)))
             .filter((note) => quoted.every((text) => noteText(note).includes(text)))
-            .filter((note) => !deck || decksOf(state, note).includes(deck))
+            .filter((note) => !deck || decksOf(state, note).some((name) => isInDeck(name, deck)))
             .map((note) => Number(note.noteId))
         );
       }
