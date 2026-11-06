@@ -34,6 +34,7 @@ describe('normalizeSettings', () => {
         noteType: '  Cloze  ',
         useNoteBased: false,
         boldQuestionInReadingMode: false,
+        syncOnSave: true,
       })
     ).toEqual({
       ankiConnectUrl: 'https://anki.local:9000',
@@ -46,6 +47,7 @@ describe('normalizeSettings', () => {
       noteType: 'Cloze',
       useNoteBased: false,
       boldQuestionInReadingMode: false,
+      syncOnSave: true,
       pendingTagMigrations: [],
     });
   });
@@ -75,6 +77,19 @@ describe('normalizeSettings', () => {
   it('drops a migration queue that is not an array', () => {
     for (const value of [undefined, null, 'old.md', 3, {}]) {
       expect(normalizeSettings({ pendingTagMigrations: value }).pendingTagMigrations).toEqual([]);
+    }
+  });
+
+  it('defaults sync on save to off and round-trips the boolean', () => {
+    expect(DEFAULT_SETTINGS.syncOnSave).toBe(false);
+    expect(normalizeSettings({}).syncOnSave).toBe(false);
+    expect(normalizeSettings({ syncOnSave: true }).syncOnSave).toBe(true);
+    expect(normalizeSettings({ syncOnSave: false }).syncOnSave).toBe(false);
+  });
+
+  it('drops a sync on save value that is not a boolean', () => {
+    for (const value of ['yes', 1, 0, null, {}, []]) {
+      expect(normalizeSettings({ syncOnSave: value }).syncOnSave).toBe(false);
     }
   });
 
@@ -208,6 +223,7 @@ describe('normalizeSettings', () => {
       noteType: 2,
       useNoteBased: 'yes',
       boldQuestionInReadingMode: 1,
+      syncOnSave: 'yes',
     });
     expect(settings).toEqual(DEFAULT_SETTINGS);
   });

@@ -61,6 +61,18 @@ export class PandaZapSettingTab extends PluginSettingTab {
             render: (setting) => this.renderDefaultDeckSetting(setting),
           },
           {
+            name: 'Sync on save',
+            desc: 'Sync a note shortly after you save it, but only when it already has Anki cards. New cards are added silently; nothing is deleted.',
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.syncOnSave).onChange((value) => {
+                  this.plugin.settings.syncOnSave = value;
+                  void this.plugin.saveSettings();
+                })
+              );
+            },
+          },
+          {
             name: 'Bold question in reading mode',
             desc: 'When enabled, only the question (not the answer) will be bolded in reading mode; question/answer tags are still removed.',
             render: (setting) => {

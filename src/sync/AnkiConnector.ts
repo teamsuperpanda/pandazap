@@ -694,6 +694,18 @@ export class AnkiConnector {
     return byNote;
   }
 
+  /**
+   * True when Anki already holds at least one plugin note for this vault path.
+   * Silent sync uses it to leave notes that were never synced alone; the source
+   * tag is unique per path, so a hit means this note owns cards in Anki.
+   */
+  async hasNotesForSourceTag(notePath: string): Promise<boolean> {
+    const noteIds = await this.findPluginNotes(
+      `tag:${PLUGIN_TAG} tag:${this.getSourceTag(notePath)}`
+    );
+    return noteIds.length > 0;
+  }
+
   /** Every media file the plugin has uploaded to Anki. */
   async getPluginMediaFiles(): Promise<string[]> {
     const names = (await this.ankiConnectRequest('getMediaFilesNames', {

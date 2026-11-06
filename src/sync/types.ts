@@ -79,6 +79,8 @@ export interface PandaZapSettings {
   noteType: string;
   useNoteBased: boolean;
   boldQuestionInReadingMode: boolean;
+  /** Sync notes shortly after saving, but only notes that already exist in Anki. */
+  syncOnSave: boolean;
   pendingTagMigrations: PendingTagMigration[];
 }
 
@@ -349,5 +351,6 @@ export const DEFAULT_SETTINGS: PandaZapSettings = {
   noteType: 'Basic',
   useNoteBased: true,
   boldQuestionInReadingMode: true,
+  syncOnSave: false,
   pendingTagMigrations: [],
 };

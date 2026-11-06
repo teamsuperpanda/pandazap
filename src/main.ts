@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, TFile, Notice } from 'obsidian';
+import { Plugin, MarkdownView, TFile, TAbstractFile, Menu, Notice } from 'obsidian';
 import { SyncModal } from './dialogs/SyncModal';
 import { PandaZapSettingTab } from './dialogs/SettingsTab';
 import { ConfirmModal } from './dialogs/ConfirmModal';
@@ -19,10 +19,15 @@ import {
   PendingTagMigration,
   SourceTagMigrationResult,
   describeConnection,
+  describeSyncResultNotice,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
-import { ANKI_CONNECT_VERSION } from './constants';
-import { normalizeSettings } from './settings';
+import {
+  ANKI_CONNECT_VERSION,
+  SYNC_ON_SAVE_DEBOUNCE_MS,
+  SYNC_STATUS_ERROR_REPEAT_MS,
+} from './constants';
+import { markerLabels, normalizeSettings } from './settings';
 
 export default class PandaZapPlugin extends Plugin {
   settings: PandaZapSettings;
@@ -32,6 +37,17 @@ export default class PandaZapPlugin extends Plugin {
   private tagMigrationQueue: Promise<void> = Promise.resolve();
   private mediaCleanupActive = false;
   private activeSyncModal: SyncModal | null = null;
+  /** Debounce timers for sync-on-save, one per note path. */
+  private silentSyncTimers = new Map<string, number>();
+  /** Paths with a silent sync currently running, so runs never stack. */
+  private silentSyncInFlight = new Set<string>();
+  /** Paths edited while their silent run was still in flight. */
+  private silentSyncAgain = new Set<string>();
+  /** Session cache of whether a note already has Anki notes. */
+  private noteHasCardsCache = new Map<string, boolean>();
+  private syncStatusItem: HTMLElement | null = null;
+  private syncStatusText = '';
+  private syncStatusError: { key: string; shownAt: number } | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -56,6 +72,16 @@ export default class PandaZapPlugin extends Plugin {
       name: 'Sync selected notes to Anki',
       callback: () => {
         void this.handleSyncSelectedNotes();
+      },
+    });
+
+    this.addCommand({
+      id: 'sync-current-note',
+      name: 'Sync current note to Anki',
+      checkCallback: (checking: boolean): boolean => {
+        if (!this.canSyncCurrentNote()) return false;
+        if (!checking) void this.syncCurrentNote();
+        return true;
       },
     });
 
@@ -94,8 +120,29 @@ export default class PandaZapPlugin extends Plugin {
       })
     );
 
+    // Markdown files offer a one-step sync from the file menu. The selected
+    // notes path is reused so a multi-selection syncs as one batch.
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        this.handleFileMenu(menu, file);
+      })
+    );
+
+    // Sync on save is gated inside the handler, so toggling the setting takes
+    // effect without reloading the plugin.
+    this.registerEvent(
+      this.app.vault.on('modify', (file) => {
+        this.handleNoteModify(file);
+      })
+    );
+
     // A rename made while Anki was unreachable is still waiting in the queue.
     void this.flushPendingTagMigrations();
+  }
+
+  onunload(): void {
+    for (const timer of this.silentSyncTimers.values()) window.clearTimeout(timer);
+    this.silentSyncTimers.clear();
   }
 
   openSyncDialog() {
@@ -188,6 +235,224 @@ export default class PandaZapPlugin extends Plugin {
     } else {
       new Notice('No files selected in file explorer');
     }
+  }
+
+  private canSyncCurrentNote(): boolean {
+    return this.app.workspace.getActiveViewOfType(MarkdownView) !== null;
+  }
+
+  /**
+   * One-step sync of the active note from the editor buffer, so unsaved edits
+   * are included. Deletions still need the dialog's confirmation, but an
+   * ordinary sync never opens it.
+   */
+  async syncCurrentNote(): Promise<void> {
+    if (!this.canSyncCurrentNote()) return;
+    if (this.activeSyncModal) {
+      this.reportSyncDialogOpen();
+      return;
+    }
+    if (this.mediaCleanupActive) {
+      new Notice('Wait for the media cleanup to finish');
+      return;
+    }
+
+    const context = this.captureSyncContext();
+    if (!context.notePath) {
+      new Notice('No active note found');
+      return;
+    }
+
+    if (await this.hasBlockingTagMigration(context.notePath)) {
+      new Notice(describeTagMigrationFailure(context.notePath));
+      return;
+    }
+
+    try {
+      const analysis = await this.analyzeSyncOperation(context);
+      if (analysis.cardsToDelete.length > 0) {
+        // Deleting Anki notes is destructive, so hand off to the existing
+        // dialog path that asks for confirmation.
+        this.openSyncDialog();
+        return;
+      }
+      if (context.cards.length === 0) {
+        const labels = markerLabels(this.settings);
+        new Notice(`No ${labels.q}: ${labels.a}: cards found in current note`);
+        return;
+      }
+      const result = await this.syncCardsToAnki(false, false, context, []);
+      new Notice(describeSyncResultNotice(result));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Sync failed: ${message}`);
+    }
+  }
+
+  /**
+   * Adds the file menu entry for Markdown files. A multi-selection syncs all
+   * selected notes, matching the existing selected-notes command.
+   */
+  private handleFileMenu(menu: Menu, file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md') return;
+    const selected = this.getSelectedNotePaths();
+    const paths = selected.includes(file.path) ? selected : [file.path];
+    const title = paths.length === 1 ? 'Sync note to Anki' : `Sync ${paths.length} notes to Anki`;
+    menu.addItem((item) => {
+      item
+        .setTitle(title)
+        .setIcon('zap')
+        .onClick(() => {
+          void this.openBatchSyncDialog(paths);
+        });
+    });
+  }
+
+  private handleNoteModify(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md') return;
+    if (!this.settings.syncOnSave) return;
+    this.scheduleSilentSync(file.path);
+  }
+
+  /** Coalesces rapid writes to one note into a single silent sync. */
+  private scheduleSilentSync(notePath: string): void {
+    const pending = this.silentSyncTimers.get(notePath);
+    if (pending !== undefined) window.clearTimeout(pending);
+    const timer = window.setTimeout(() => {
+      this.silentSyncTimers.delete(notePath);
+      void this.runSilentSync(notePath);
+    }, SYNC_ON_SAVE_DEBOUNCE_MS);
+    this.silentSyncTimers.set(notePath, timer);
+  }
+
+  private async runSilentSync(notePath: string): Promise<void> {
+    if (!this.settings.syncOnSave) return;
+    // A dialog or cleanup owns Anki right now; the next save retries instead of
+    // surfacing a modal or a notice for an edit the user did not ask to sync.
+    if (this.activeSyncModal || this.mediaCleanupActive) {
+      this.setSyncStatus(
+        'Panda Zap: paused',
+        this.activeSyncModal
+          ? 'Sync on save is paused while a sync dialog is open'
+          : 'Sync on save is paused while media cleanup runs'
+      );
+      return;
+    }
+    if (this.silentSyncInFlight.has(notePath)) {
+      this.silentSyncAgain.add(notePath);
+      return;
+    }
+    this.silentSyncInFlight.add(notePath);
+    try {
+      await this.syncNoteSilently(notePath);
+    } catch (error: unknown) {
+      this.reportSilentSyncFailure(notePath, error);
+    } finally {
+      this.silentSyncInFlight.delete(notePath);
+      if (this.silentSyncAgain.delete(notePath) && this.settings.syncOnSave) {
+        this.scheduleSilentSync(notePath);
+      }
+    }
+  }
+
+  /**
+   * Writes one note to Anki without UI. Only notes that already have cards are
+   * touched, and deletion is disabled by confirming an empty deletion list.
+   */
+  private async syncNoteSilently(notePath: string): Promise<void> {
+    if (await this.hasBlockingTagMigration(notePath)) return;
+
+    const context = await this.captureSyncContextForPath(notePath);
+    if (!context || context.cards.length === 0) return;
+    if (!(await this.hasCardsInAnki(notePath))) return;
+
+    this.setSyncStatus(`Panda Zap: syncing ${noteName(notePath)}`, `Syncing ${notePath} to Anki`);
+    this.ankiConnector.updateSettings(this.settings);
+    try {
+      const result = await this.ankiConnector.syncCards(
+        context.cards,
+        false,
+        notePath,
+        context.noteContent,
+        // The connector requires an explicit confirmation before deleting; an
+        // empty list means it has nothing it is allowed to remove.
+        true,
+        [],
+        false
+      );
+      const failed = result.cards.filter(
+        (card) => card.status === 'failed' || card.status === 'image-failed'
+      );
+      if (failed.length > 0) {
+        throw new Error(`${failed.length} of ${result.cards.length} cards failed`);
+      }
+      // The note now has cards for certain, so the cached answer is stale.
+      this.noteHasCardsCache.delete(notePath);
+      this.clearSyncStatusError();
+      this.setSyncStatus('Panda Zap: idle', 'Sync on save is active');
+    } finally {
+      this.ankiConnector.invalidateCache();
+    }
+  }
+
+  /** True when the note still needs a queued rename migration before syncing. */
+  private async hasBlockingTagMigration(notePath: string): Promise<boolean> {
+    const failed = await this.flushPendingTagMigrations();
+    return failed.some((migration) => migration.toPath === notePath);
+  }
+
+  private async hasCardsInAnki(notePath: string): Promise<boolean> {
+    const cached = this.noteHasCardsCache.get(notePath);
+    if (cached !== undefined) return cached;
+    const hasCards = await this.ankiConnector.hasNotesForSourceTag(notePath);
+    this.noteHasCardsCache.set(notePath, hasCards);
+    return hasCards;
+  }
+
+  /** Reads a note, preferring the editor buffer so unsaved edits are included. */
+  private async captureSyncContextForPath(notePath: string): Promise<SyncContext | null> {
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const bufferedContent =
+      activeView?.file?.path === notePath ? activeView.editor?.getValue() : undefined;
+    let content = bufferedContent;
+    if (content === undefined) {
+      const file = this.app.vault.getAbstractFileByPath(notePath);
+      if (!(file instanceof TFile)) return null;
+      content = await this.app.vault.read(file);
+    }
+    const cards = extractQACardsFromText(content, this.settings);
+    return createSyncContext(cards, notePath, content);
+  }
+
+  private setSyncStatus(text: string, tooltip: string): void {
+    if (!this.syncStatusItem) {
+      this.syncStatusItem = this.addStatusBarItem();
+      this.syncStatusItem.addClass('panda-zap-sync-status');
+    }
+    this.syncStatusItem.setText(text);
+    this.syncStatusItem.setAttribute('aria-label', tooltip);
+    this.syncStatusItem.setAttribute('title', tooltip);
+    this.syncStatusText = text;
+  }
+
+  private reportSilentSyncFailure(notePath: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const key = `${notePath}\0${message}`;
+    const now = Date.now();
+    const repeated =
+      this.syncStatusError?.key === key &&
+      now - this.syncStatusError.shownAt < SYNC_STATUS_ERROR_REPEAT_MS;
+    // Keep the original timestamp so a repeating failure stays quiet, but never
+    // leave a "syncing" state behind: an identical error still replaces it.
+    const shownAt = this.syncStatusError && repeated ? this.syncStatusError.shownAt : now;
+    this.syncStatusError = { key, shownAt };
+    const text = `Panda Zap: sync failed - ${noteName(notePath)}`;
+    if (repeated && this.syncStatusText === text) return;
+    this.setSyncStatus(text, `Last sync on save for ${notePath} failed: ${message}`);
+  }
+
+  private clearSyncStatusError(): void {
+    this.syncStatusError = null;
   }
 
   async loadSettings() {
@@ -580,6 +845,8 @@ export default class PandaZapPlugin extends Plugin {
         noteStart += context.cards.length;
       }
 
+      // A successful manual batch may have created these notes' first cards.
+      for (const notePath of bContext.notePaths) this.noteHasCardsCache.delete(notePath);
       return result;
     } finally {
       // One refresh for the whole batch, even when a note throws.
@@ -614,7 +881,7 @@ export default class PandaZapPlugin extends Plugin {
     await this.ensureTagMigrationsApplied([syncContext.notePath]);
     this.ankiConnector.updateSettings(this.settings);
     try {
-      return await this.ankiConnector.syncCards(
+      const result = await this.ankiConnector.syncCards(
         syncContext.cards,
         preview,
         syncContext.notePath,
@@ -624,6 +891,9 @@ export default class PandaZapPlugin extends Plugin {
         false,
         runOptions
       );
+      // A manual sync may have created this note's first cards.
+      if (syncContext.notePath) this.noteHasCardsCache.delete(syncContext.notePath);
+      return result;
     } finally {
       // A sync run writes notes, so re-read Anki on the next user action.
       this.ankiConnector.invalidateCache();
@@ -644,4 +914,8 @@ function describeOrphanedLegacy(notePath: string): string {
 
 function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
+}
+
+function noteName(notePath: string): string {
+  return notePath.split('/').pop()?.replace(/\.md$/i, '') || notePath;
 }
