@@ -2,6 +2,7 @@ import { Modal, App, setIcon } from 'obsidian';
 import type { IconName } from 'obsidian';
 import { SyncAnalysis, CardSyncInfo, PandaZapSettings } from '../sync/types';
 import { markerLabels } from '../settings';
+import { CollapsibleSection } from './CollapsibleSection';
 
 export class PreviewModal extends Modal {
   private syncAnalysis: SyncAnalysis;
@@ -79,40 +80,13 @@ export class PreviewModal extends Modal {
     cards: CardSyncInfo[]
   ) {
     const section = container.createDiv('panda-zap-preview-section');
-    const sectionHeader = section.createDiv('panda-zap-section-header');
-    sectionHeader.setAttr('role', 'button');
-    sectionHeader.setAttr('tabindex', '0');
-    sectionHeader.setAttr('aria-expanded', 'true');
-    const iconEl = sectionHeader.createSpan({ cls: 'panda-zap-section-icon' });
-    setIcon(iconEl, icon);
-    const toggleIcon = sectionHeader.createSpan({ cls: 'panda-zap-toggle-icon expanded' });
-    toggleIcon.textContent = '▼';
-    sectionHeader.createSpan({
-      text: `${title} (${cards.length})`,
-      cls: 'panda-zap-section-title',
+    const collapsible = new CollapsibleSection(section, {
+      title,
+      count: cards.length,
+      contentClasses: 'panda-zap-cards-container',
+      icon,
     });
-    const cardsContainer = section.createDiv('panda-zap-cards-container expanded');
-    const toggle = () => {
-      const isExpanded = cardsContainer.classList.contains('expanded');
-      if (isExpanded) {
-        toggleIcon.classList.remove('expanded');
-        toggleIcon.textContent = '▶';
-        cardsContainer.classList.remove('expanded');
-        cardsContainer.classList.add('collapsed');
-      } else {
-        toggleIcon.classList.add('expanded');
-        toggleIcon.textContent = '▼';
-        cardsContainer.classList.remove('collapsed');
-        cardsContainer.classList.add('expanded');
-      }
-      sectionHeader.setAttr('aria-expanded', String(!isExpanded));
-    };
-    sectionHeader.onclick = toggle;
-    sectionHeader.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      toggle();
-    });
+    const cardsContainer = collapsible.contentEl;
     const labels = markerLabels(this.settings);
     cards.forEach((cardInfo, index) => {
       const cardElement = cardsContainer.createDiv(`panda-zap-card ${type}`);

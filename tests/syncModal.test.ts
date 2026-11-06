@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FakeEl, findByClass, findByTagAndText, textOf } from './fakeDom';
 
 const { notices } = vi.hoisted(() => ({ notices: [] as string[] }));
 
@@ -6,7 +7,7 @@ vi.mock('obsidian', () => ({
   App: class {},
   setIcon: vi.fn(),
   Modal: class {
-    contentEl = { querySelector: () => null, empty: () => undefined };
+    contentEl = new FakeEl();
     open() {
       // no-op
     }
@@ -23,25 +24,22 @@ vi.mock('obsidian', () => ({
 
 vi.mock('../src/main', () => ({ default: class {} }));
 
-import { SyncModal } from '../src/dialogs/SyncModal';
 import { Modal } from 'obsidian';
+import { SyncModal } from '../src/dialogs/SyncModal';
+import { PreviewModal } from '../src/dialogs/PreviewModal';
+import { ConfirmDeleteModal, describeDeleteConfirmation } from '../src/dialogs/ConfirmDeleteModal';
 import {
   DEFAULT_SETTINGS,
   createBatchSyncContext,
   createSyncContext,
+  type AnkiConnectionState,
   type BatchSyncContext,
   type CardSyncInfo,
   type SyncAnalysis,
   type SyncContext,
+  type SyncResult,
   type SyncRunOptions,
 } from '../src/sync/types';
-
-type ModalInternals = {
-  performSingleSync(): Promise<void>;
-  performBatchSync(context: BatchSyncContext): Promise<void>;
-  showDeleteConfirmation(count: number, noteCount?: number): Promise<boolean>;
-  close(): void;
-};
 
 function analysis(overrides: Partial<SyncAnalysis> = {}): SyncAnalysis {
   return {
@@ -54,6 +52,10 @@ function analysis(overrides: Partial<SyncAnalysis> = {}): SyncAnalysis {
   };
 }
 
+function card(question: string): CardSyncInfo {
+  return { card: { question, answer: 'Answer' }, deckName: 'Default' };
+}
+
 function deletion(id: number, notePath?: string, externallyEdited = false): CardSyncInfo {
   return {
     card: { question: 'Removed question', answer: 'Removed answer' },
@@ -64,50 +66,157 @@ function deletion(id: number, notePath?: string, externallyEdited = false): Card
   };
 }
 
-function pluginStub(
-  context: SyncContext,
-  singleAnalysis: SyncAnalysis,
-  batchAnalysis: SyncAnalysis
-) {
+interface PluginStubOptions {
+  context?: SyncContext;
+  connections?: AnkiConnectionState[];
+  singleAnalysis?: SyncAnalysis;
+  batchAnalysis?: SyncAnalysis;
+}
+
+function pluginStub(options: PluginStubOptions = {}) {
+  const context = options.context ?? createSyncContext([], 'mine.md', '');
+  const connections = options.connections ?? [{ status: 'ok', version: 6 }];
+  let connectionIndex = 0;
   return {
     settings: { ...DEFAULT_SETTINGS, useNoteBased: false },
+    manifest: { id: 'panda-zap' },
     captureSyncContext: vi.fn(() => context),
-    analyzeSyncOperation: vi.fn().mockResolvedValue(singleAnalysis),
-    syncCardsToAnki: vi.fn().mockResolvedValue({ cards: [] }),
-    analyzeBatchSyncOperation: vi.fn().mockResolvedValue(batchAnalysis),
-    syncBatchCards: vi.fn().mockResolvedValue({ cards: [] }),
-    showSyncModal: vi.fn(),
+    testAnkiConnectionStatus: vi.fn(() =>
+      Promise.resolve(connections[Math.min(connectionIndex++, connections.length - 1)])
+    ),
+    analyzeSyncOperation: vi.fn(() => Promise.resolve(options.singleAnalysis ?? analysis())),
+    analyzeBatchSyncOperation: vi.fn(() => Promise.resolve(options.batchAnalysis ?? analysis())),
+    syncCardsToAnki: vi.fn(() => Promise.resolve<SyncResult>({ cards: [] })),
+    syncBatchCards: vi.fn(() => Promise.resolve<SyncResult>({ cards: [] })),
     clearActiveSyncModal: vi.fn(),
   };
 }
 
-function createModal(
-  plugin: ReturnType<typeof pluginStub>,
-  batchContext?: BatchSyncContext
-): ModalInternals {
-  return new SyncModal({} as never, plugin as never, batchContext) as unknown as ModalInternals;
+function content(modal: SyncModal): FakeEl {
+  return modal.contentEl as unknown as FakeEl;
 }
 
-describe('SyncModal deletion handling', () => {
+async function openModal(
+  plugin: ReturnType<typeof pluginStub>,
+  batchContext?: BatchSyncContext
+): Promise<SyncModal> {
+  const modal = new SyncModal({} as never, plugin as never, batchContext);
+  await modal.onOpen();
+  return modal;
+}
+
+function clickButton(root: FakeEl, text: string): void {
+  const button = findByTagAndText(root, 'button', text);
+  if (!button) throw new Error(`button "${text}" not found`);
+  button.onclick?.();
+}
+
+/**
+ * A rendered section, by its header. Kept short so the view assertions stay
+ * about behaviour rather than the fake element tree.
+ */
+function sections(root: FakeEl): FakeEl[] {
+  return findByClass(root, 'panda-zap-section-header');
+}
+
+describe('SyncModal view', () => {
   beforeEach(() => {
     notices.length = 0;
   });
 
-  it('confirms and deletes the cards of a note that was emptied', async () => {
+  it('renders the connection status, summary and buttons from the controller', async () => {
+    const plugin = pluginStub({
+      context: createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md'),
+      singleAnalysis: analysis({ cardsToAdd: [card('Added')], cardsToDelete: [deletion(11)] }),
+    });
+
+    const modal = await openModal(plugin);
+
+    expect(modal.controller.phase).toBe('ready');
+    const rendered = textOf(content(modal));
+    expect(rendered).toContain('Connected to Anki');
+    expect(rendered).toContain('Summary');
+    expect(
+      findByClass(content(modal), 'panda-zap-pill-number').map((pill) => pill.textContent)
+    ).toEqual(['1', '0', '1']);
+    expect(findByTagAndText(content(modal), 'button', 'Sync to Anki')?.disabled).toBe(false);
+    expect(findByTagAndText(content(modal), 'button', 'Preview changes')?.disabled).toBe(false);
+  });
+
+  it('repairs a failed connection in the existing modal instead of rebuilding it', async () => {
+    const plugin = pluginStub({
+      context: createSyncContext([], 'mine.md', ''),
+      connections: [{ status: 'unreachable' }, { status: 'ok', version: 6 }],
+    });
+    const modal = await openModal(plugin);
+    const element = content(modal);
+
+    expect(modal.controller.phase).toBe('failed');
+    expect(textOf(element)).toContain('Not connected to Anki');
+    expect(findByTagAndText(element, 'button', 'Test connection')).toBeDefined();
+
+    clickButton(element, 'Test connection');
+    await vi.waitFor(() => expect(modal.controller.phase).toBe('ready'));
+
+    expect(notices).toContain('Connected to Anki!');
+    expect(textOf(element)).toContain('Connected to Anki');
+    expect(findByTagAndText(element, 'button', 'Sync to Anki')).toBeDefined();
+    expect(content(modal)).toBe(element);
+    expect(plugin.analyzeSyncOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the sync action and blocks closing while a run is in flight', async () => {
+    const plugin = pluginStub({
+      context: createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md'),
+    });
+    let release: ((result: SyncResult) => void) | undefined;
+    plugin.syncCardsToAnki.mockImplementation(
+      () =>
+        new Promise<SyncResult>((resolve) => {
+          release = resolve;
+        })
+    );
+    const modal = await openModal(plugin);
+    const closeSpy = vi.spyOn(Modal.prototype, 'close');
+
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(plugin.syncCardsToAnki).toHaveBeenCalled());
+
+    expect(modal.controller.phase).toBe('syncing');
+    expect(modal.controller.canSync).toBe(false);
+    expect(findByClass(content(modal), 'panda-zap-button-container')[0].classes.has('hidden')).toBe(
+      true
+    );
+    expect(findByTagAndText(content(modal), 'button', 'Sync to Anki')).toBeUndefined();
+    expect(findByTagAndText(content(modal), 'button', 'Cancel')).toBeDefined();
+    expect(textOf(content(modal))).toContain('Syncing...');
+
+    modal.close();
+    expect(notices).toContain('Cancel the sync first');
+    expect(closeSpy).not.toHaveBeenCalled();
+
+    release?.({ cards: [] });
+    await vi.waitFor(() => expect(modal.controller.phase).toBe('done'));
+    expect(textOf(content(modal))).toContain('Sync results');
+  });
+
+  it('confirms deletions before syncing a note', async () => {
     const context = createSyncContext([], 'mine.md', 'Nothing left here');
-    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion(11)] }), analysis());
-    const modal = createModal(plugin);
-    const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
+    const plugin = pluginStub({
+      context,
+      singleAnalysis: analysis({ cardsToDelete: [deletion(11)] }),
+    });
+    const confirm = vi.spyOn(ConfirmDeleteModal.prototype, 'confirm').mockResolvedValue(true);
+    const modal = await openModal(plugin);
 
-    await modal.performSingleSync();
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(plugin.syncCardsToAnki).toHaveBeenCalled());
 
-    expect(confirm).toHaveBeenCalledWith(1, undefined, 0);
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(
       true,
       context,
       [11],
-      // The casts are type-only: expect.objectContaining returns any, which the
-      // nested-matcher rule rejects inside objectContaining's generic parameter.
       expect.objectContaining({
         abort: expect.objectContaining({ cancelled: false }) as SyncRunOptions['abort'],
         onProgress: expect.any(Function) as SyncRunOptions['onProgress'],
@@ -115,124 +224,116 @@ describe('SyncModal deletion handling', () => {
     );
   });
 
-  it('shows the no-cards notice for a note that was never synced', async () => {
-    const context = createSyncContext([], 'fresh.md', 'No cards at all');
-    const plugin = pluginStub(context, analysis(), analysis());
-    const modal = createModal(plugin);
-    const close = vi.spyOn(modal, 'close');
+  it('closes and reports a note that has nothing to sync', async () => {
+    const plugin = pluginStub({ context: createSyncContext([], 'fresh.md', 'No cards at all') });
+    const modal = await openModal(plugin);
+    const closeSpy = vi.spyOn(Modal.prototype, 'close');
 
-    await modal.performSingleSync();
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(notices).toContain('No Q: A: cards found in current note'));
 
-    expect(notices).toContain('No Q: A: cards found in current note');
-    expect(close).toHaveBeenCalled();
+    expect(closeSpy).toHaveBeenCalled();
     expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
   });
 
-  it('flags externally edited cards in the deletion confirmation', async () => {
-    const context = createSyncContext([], 'mine.md', 'Nothing left here');
-    const plugin = pluginStub(
-      context,
-      analysis({ cardsToDelete: [deletion(11, undefined, true)] }),
-      analysis()
-    );
-    const modal = createModal(plugin);
-    const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
-
-    await modal.performSingleSync();
-
-    expect(confirm).toHaveBeenCalledWith(1, undefined, 1);
-  });
-
-  it('aborts without syncing when the deletion is not confirmed', async () => {
-    const context = createSyncContext([], 'mine.md', '');
-    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion(11)] }), analysis());
-    const modal = createModal(plugin);
-    vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(false);
-
-    await modal.performSingleSync();
-
-    expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
-  });
-
-  it('deletes the cards of an emptied note in a selected batch', async () => {
+  it('keeps a batch with nothing to sync open', async () => {
     const batchContext = createBatchSyncContext(
       new Map([['one.md', createSyncContext([], 'one.md', '')]])
     );
-    const plugin = pluginStub(
-      createSyncContext([]),
-      analysis(),
-      analysis({ cardsToDelete: [deletion(11, 'one.md')] })
-    );
-    const modal = createModal(plugin, batchContext);
-    const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
+    const plugin = pluginStub({});
+    const modal = await openModal(plugin, batchContext);
+    const closeSpy = vi.spyOn(Modal.prototype, 'close');
 
-    await modal.performBatchSync(batchContext);
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(notices).toContain('No cards found in selected notes'));
 
-    expect(confirm).toHaveBeenCalledWith(1, 1, 0);
-    const [, deleteConfirmed, idsByNote] = plugin.syncBatchCards.mock.calls[0] as [
-      BatchSyncContext,
-      boolean,
-      ReadonlyMap<string, readonly string[]>,
-    ];
-    expect(deleteConfirmed).toBe(true);
-    expect([...idsByNote.entries()]).toEqual([['one.md', [11]]]);
-  });
-
-  it('does not sync a selected batch with no cards and no deletions', async () => {
-    const batchContext = createBatchSyncContext(
-      new Map([['one.md', createSyncContext([], 'one.md', '')]])
-    );
-    const plugin = pluginStub(createSyncContext([]), analysis(), analysis());
-    const modal = createModal(plugin, batchContext);
-
-    await modal.performBatchSync(batchContext);
-
-    expect(notices).toContain('No cards found in selected notes');
+    expect(closeSpy).not.toHaveBeenCalled();
     expect(plugin.syncBatchCards).not.toHaveBeenCalled();
   });
 
-  it('blocks closing while a sync is running', async () => {
-    const context = createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md');
-    const plugin = pluginStub(context, analysis(), analysis());
-    let release: (() => void) | undefined;
-    plugin.syncCardsToAnki.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve({ cards: [] });
-        })
-    );
-    const modal = createModal(plugin);
-    const closeSpy = vi.spyOn(Modal.prototype, 'close');
+  it('renders the skipped results in a keyboard-operable collapsible section', async () => {
+    const result: SyncResult = {
+      cards: [{ card: { question: 'Q', answer: 'A' }, status: 'skipped-existing' }],
+    };
+    const plugin = pluginStub({
+      context: createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md'),
+    });
+    plugin.syncCardsToAnki.mockResolvedValue(result);
+    const modal = await openModal(plugin);
 
-    const run = modal.performSingleSync();
-    await vi.waitFor(() => expect(plugin.syncCardsToAnki).toHaveBeenCalled());
+    clickButton(content(modal), 'Sync to Anki');
+    await vi.waitFor(() => expect(modal.controller.phase).toBe('done'));
 
-    modal.close();
+    const [header] = sections(content(modal));
+    expect(header).toBeDefined();
+    expect(header.getAttr('role')).toBe('button');
+    expect(header.getAttr('tabindex')).toBe('0');
+    expect(header.getAttr('aria-expanded')).toBe('false');
+    expect(textOf(header)).toContain('Skipped (1)');
 
-    expect(notices).toContain('Cancel the sync first');
-    expect(closeSpy).not.toHaveBeenCalled();
+    const skippedList = findByClass(content(modal), 'panda-zap-skipped-list')[0];
+    expect(skippedList.classList.contains('hidden')).toBe(true);
 
-    release?.();
-    await run;
-  });
+    const preventDefault = vi.fn();
+    header.onkeydown?.({ key: 'Enter', preventDefault } as unknown as KeyboardEvent);
 
-  it('does not start a sync once the modal closed', async () => {
-    const context = createSyncContext([{ question: 'Q', answer: 'A' }], 'mine.md');
-    const plugin = pluginStub(context, analysis(), analysis());
-    const modal = createModal(plugin);
-    (modal as unknown as { closed: boolean }).closed = true;
-
-    await modal.performSingleSync();
-
-    expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalled();
+    expect(header.getAttr('aria-expanded')).toBe('true');
+    expect(skippedList.classList.contains('hidden')).toBe(false);
+    expect(skippedList.classList.contains('expanded')).toBe(true);
   });
 
   it('clears the active modal when it closes', () => {
-    const plugin = pluginStub(createSyncContext([]), analysis(), analysis());
+    const plugin = pluginStub({});
     const modal = new SyncModal({} as never, plugin as never);
 
-    (modal as unknown as { onClose(): void }).onClose();
+    modal.onClose();
 
     expect(plugin.clearActiveSyncModal).toHaveBeenCalledWith(modal);
+  });
+});
+
+describe('ConfirmDeleteModal wording', () => {
+  it('names the note count only when several notes are affected', () => {
+    expect(describeDeleteConfirmation({ count: 2, editedCount: 0 })).toBe(
+      'This will delete 2 cards from Anki that were removed from this note. Proceed?'
+    );
+    expect(describeDeleteConfirmation({ count: 2, noteCount: 1, editedCount: 0 })).toBe(
+      'This will delete 2 cards from Anki that were removed from this note. Proceed?'
+    );
+    expect(describeDeleteConfirmation({ count: 2, noteCount: 3, editedCount: 0 })).toBe(
+      'This will delete 2 cards from 3 notes that were removed from your notes. Proceed?'
+    );
+  });
+
+  it('warns about cards that changed in Anki', () => {
+    expect(describeDeleteConfirmation({ count: 2, noteCount: 3, editedCount: 1 })).toBe(
+      'This will delete 2 cards from 3 notes that were removed from your notes. 1 of these cards were changed in Anki and will be deleted. Proceed?'
+    );
+  });
+});
+
+describe('PreviewModal collapsible sections', () => {
+  it('renders expanded, accessible sections and toggles them', () => {
+    const modal = new PreviewModal(
+      {} as never,
+      analysis({ cardsToAdd: [card('Added')] }),
+      DEFAULT_SETTINGS
+    );
+    modal.onOpen();
+    const element = modal.contentEl as unknown as FakeEl;
+
+    const [header] = sections(element);
+    expect(header.getAttr('role')).toBe('button');
+    expect(header.getAttr('tabindex')).toBe('0');
+    expect(header.getAttr('aria-expanded')).toBe('true');
+    expect(textOf(header)).toContain('Cards to Add (1)');
+
+    header.onclick?.();
+
+    expect(header.getAttr('aria-expanded')).toBe('false');
+    const cardsContainer = findByClass(element, 'panda-zap-cards-container')[0];
+    expect(cardsContainer.classList.contains('collapsed')).toBe(true);
+    expect(cardsContainer.classList.contains('hidden')).toBe(true);
   });
 });

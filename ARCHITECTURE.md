@@ -11,9 +11,12 @@ pandazap/
 │   ├── constants.ts        # AnkiConnect version, timeouts, defaults, plugin tag
 │   ├── settings.ts         # Settings normalization, marker labels, port/URL helpers
 │   ├── dialogs/            # Modal UI components
-│   │   ├── SyncModal.ts    # Main sync dialog: connection -> analysis -> preview -> sync
+│   │   ├── SyncModal.ts    # Sync dialog view: renders the controller phase into elements
+│   │   ├── SyncModalController.ts # DOM-free sync dialog state, phases and decisions
 │   │   ├── PreviewModal.ts # Card change preview (add/update/delete) with collapsible sections
+│   │   ├── CollapsibleSection.ts # Shared collapsible section with keyboard support
 │   │   ├── ConfirmModal.ts # Small reusable confirmation dialog for destructive actions
+│   │   ├── ConfirmDeleteModal.ts # Deletion confirmation for the sync dialog
 │   │   └── SettingsTab.ts  # Settings UI using Obsidian 1.13+ getSettingDefinitions() API
 │   └── sync/               # Core sync engine
 │       ├── types.ts         # All TypeScript interfaces, enums, default settings
