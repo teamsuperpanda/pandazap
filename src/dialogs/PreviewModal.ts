@@ -1,4 +1,5 @@
-import { Modal, App } from 'obsidian';
+import { Modal, App, setIcon } from 'obsidian';
+import type { IconName } from 'obsidian';
 import { SyncAnalysis, CardSyncInfo, PandaZapSettings } from '../sync/types';
 import { markerLabels } from '../settings';
 
@@ -33,36 +34,57 @@ export class PreviewModal extends Modal {
       this.syncAnalysis.cardsInConflict.length;
     if (totalChanges === 0) {
       const emptyState = content.createDiv('panda-zap-empty-state');
-      emptyState.createSpan({ text: '✨ No changes needed - all cards are up to date!' });
+      const emptyIcon = emptyState.createSpan({ cls: 'panda-zap-section-icon' });
+      setIcon(emptyIcon, 'sparkles');
+      emptyState.createSpan({ text: 'No changes needed - all cards are up to date!' });
       return;
     }
     if (this.syncAnalysis.cardsToAdd.length > 0) {
-      this.renderSection(content, 'add', '📝 Cards to Add', this.syncAnalysis.cardsToAdd);
+      this.renderSection(content, 'add', 'plus', 'Cards to Add', this.syncAnalysis.cardsToAdd);
     }
     if (this.syncAnalysis.cardsToUpdate.length > 0) {
-      this.renderSection(content, 'update', '🔄 Cards to Update', this.syncAnalysis.cardsToUpdate);
+      this.renderSection(
+        content,
+        'update',
+        'refresh-cw',
+        'Cards to Update',
+        this.syncAnalysis.cardsToUpdate
+      );
     }
     if (this.syncAnalysis.cardsInConflict.length > 0) {
       this.renderSection(
         content,
         'conflict',
-        '⚠️ Cards Changed in Anki (skipped)',
+        'alert-triangle',
+        'Cards Changed in Anki (skipped)',
         this.syncAnalysis.cardsInConflict
       );
     }
     if (this.syncAnalysis.cardsToDelete.length > 0) {
-      this.renderSection(content, 'delete', '🗑️ Cards to Remove', this.syncAnalysis.cardsToDelete);
+      this.renderSection(
+        content,
+        'delete',
+        'trash-2',
+        'Cards to Remove',
+        this.syncAnalysis.cardsToDelete
+      );
     }
   }
 
   private renderSection(
     container: HTMLElement,
     type: string,
+    icon: IconName,
     title: string,
     cards: CardSyncInfo[]
   ) {
     const section = container.createDiv('panda-zap-preview-section');
     const sectionHeader = section.createDiv('panda-zap-section-header');
+    sectionHeader.setAttr('role', 'button');
+    sectionHeader.setAttr('tabindex', '0');
+    sectionHeader.setAttr('aria-expanded', 'true');
+    const iconEl = sectionHeader.createSpan({ cls: 'panda-zap-section-icon' });
+    setIcon(iconEl, icon);
     const toggleIcon = sectionHeader.createSpan({ cls: 'panda-zap-toggle-icon expanded' });
     toggleIcon.textContent = '▼';
     sectionHeader.createSpan({
@@ -70,8 +92,8 @@ export class PreviewModal extends Modal {
       cls: 'panda-zap-section-title',
     });
     const cardsContainer = section.createDiv('panda-zap-cards-container expanded');
-    sectionHeader.onclick = () => {
-      const isExpanded = toggleIcon.classList.contains('expanded');
+    const toggle = () => {
+      const isExpanded = cardsContainer.classList.contains('expanded');
       if (isExpanded) {
         toggleIcon.classList.remove('expanded');
         toggleIcon.textContent = '▶';
@@ -83,7 +105,14 @@ export class PreviewModal extends Modal {
         cardsContainer.classList.remove('collapsed');
         cardsContainer.classList.add('expanded');
       }
+      sectionHeader.setAttr('aria-expanded', String(!isExpanded));
     };
+    sectionHeader.onclick = toggle;
+    sectionHeader.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
     const labels = markerLabels(this.settings);
     cards.forEach((cardInfo, index) => {
       const cardElement = cardsContainer.createDiv(`panda-zap-card ${type}`);

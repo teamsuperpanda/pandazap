@@ -30,6 +30,16 @@ import {
 } from './constants';
 import { markerLabels, normalizeSettings } from './settings';
 
+/** The file explorer's multi-selection API, which is not public. */
+interface FileExplorerSelection {
+  getSelectedFiles(): unknown;
+}
+
+function hasSelectedFiles(view: unknown): view is FileExplorerSelection {
+  if (typeof view !== 'object' || view === null) return false;
+  return typeof (view as { getSelectedFiles?: unknown }).getSelectedFiles === 'function';
+}
+
 export default class PandaZapPlugin extends Plugin {
   settings: PandaZapSettings = { ...DEFAULT_SETTINGS, pendingTagMigrations: [] };
   private ankiConnector: AnkiConnector = new AnkiConnector(this.settings, this.app);
@@ -229,19 +239,18 @@ export default class PandaZapPlugin extends Plugin {
     // Try FileExplorer view's getSelectedFiles API
     const leaves = this.app.workspace.getLeavesOfType('file-explorer');
     for (const leaf of leaves) {
-      const view = leaf.view as unknown as { getSelectedFiles?: () => unknown };
-      if (typeof view.getSelectedFiles === 'function') {
-        const selected: unknown = view.getSelectedFiles();
-        if (selected instanceof Set) {
-          return [...selected]
-            .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
-            .map((f) => f.path);
-        }
-        if (Array.isArray(selected)) {
-          return selected
-            .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
-            .map((f) => f.path);
-        }
+      const view: unknown = leaf.view;
+      if (!hasSelectedFiles(view)) continue;
+      const selected: unknown = view.getSelectedFiles();
+      if (selected instanceof Set) {
+        return [...selected]
+          .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
+          .map((f) => f.path);
+      }
+      if (Array.isArray(selected)) {
+        return selected
+          .filter((f): f is TFile => f instanceof TFile && f.extension === 'md')
+          .map((f) => f.path);
       }
     }
 

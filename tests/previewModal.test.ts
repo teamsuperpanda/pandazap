@@ -2,6 +2,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('obsidian', () => ({
+  setIcon: (el: HTMLElement) => {
+    el.textContent = 'icon';
+  },
   Modal: class {
     contentEl: HTMLElement = document.createElement('div');
     open() {
@@ -75,10 +78,10 @@ describe('PreviewModal', () => {
     );
     expect(titles).toHaveLength(4);
     expect(titles).toEqual([
-      '📝 Cards to Add (2)',
-      '🔄 Cards to Update (1)',
-      '⚠️ Cards Changed in Anki (skipped) (1)',
-      '🗑️ Cards to Remove (1)',
+      'Cards to Add (2)',
+      'Cards to Update (1)',
+      'Cards Changed in Anki (skipped) (1)',
+      'Cards to Remove (1)',
     ]);
   });
 
@@ -88,7 +91,7 @@ describe('PreviewModal', () => {
     const titles = Array.from(contentEl.querySelectorAll('.panda-zap-section-title')).map(
       (el) => el.textContent
     );
-    expect(titles).toEqual(['🔄 Cards to Update (1)']);
+    expect(titles).toEqual(['Cards to Update (1)']);
   });
 
   it('labels a card with its note when a note label is known', () => {

@@ -1,4 +1,4 @@
-import { Modal, App, Notice } from 'obsidian';
+import { Modal, App, Notice, setIcon } from 'obsidian';
 import PandaZapPlugin from '../main';
 import {
   SyncAnalysis,
@@ -19,11 +19,29 @@ import { ANKI_CONNECT_VERSION, SYNC_PROGRESS_RENDER_INTERVAL_MS } from '../const
 import { PreviewModal } from './PreviewModal';
 import { markerLabels } from '../settings';
 
-// Interface to properly type the App's setting property
-interface AppWithSetting extends App {
-  setting: {
-    open(): void;
-    openTabById(id: string): void;
+/**
+ * Obsidian's settings pane is not part of the public App API, so it is reached
+ * through a runtime check and a supported notice when it is unavailable.
+ */
+interface SettingsApi {
+  open: () => void;
+  openTabById: (id: string) => void;
+}
+
+function asSettingsApi(app: unknown): SettingsApi | null {
+  if (typeof app !== 'object' || app === null) return null;
+  const setting = (app as Record<string, unknown>).setting;
+  if (typeof setting !== 'object' || setting === null) return null;
+  const candidate = setting as { open?: unknown; openTabById?: unknown };
+  const { open, openTabById } = candidate;
+  if (typeof open !== 'function' || typeof openTabById !== 'function') return null;
+  return {
+    open: () => {
+      open.call(setting);
+    },
+    openTabById: (id: string) => {
+      openTabById.call(setting, id);
+    },
   };
 }
 
@@ -62,7 +80,8 @@ export class SyncModal extends Modal {
 
     const header = contentEl.createDiv('panda-zap-header');
 
-    const gearBtn = contentEl.createEl('button', { cls: 'panda-zap-settings-gear', text: '⚙️' });
+    const gearBtn = contentEl.createEl('button', { cls: 'panda-zap-settings-gear' });
+    setIcon(gearBtn, 'settings');
     gearBtn.setAttr('aria-label', 'Open Panda Zap settings');
     gearBtn.setAttr('title', 'Open plugin settings');
     gearBtn.onclick = () => this.openSettings();
@@ -590,6 +609,9 @@ export class SyncModal extends Modal {
 
     if (skipped.length > 0) {
       const skipHeader = finalResultContainer.createDiv('panda-zap-section-header');
+      skipHeader.setAttr('role', 'button');
+      skipHeader.setAttr('tabindex', '0');
+      skipHeader.setAttr('aria-expanded', 'false');
       const toggle = skipHeader.createSpan({ cls: 'panda-zap-toggle-icon', text: '▸' });
       skipHeader.createDiv({
         cls: 'panda-zap-section-title',
@@ -602,17 +624,23 @@ export class SyncModal extends Modal {
         const item = skippedList.createDiv('panda-zap-result-item');
         item.createSpan({ text: formatSyncCardResult(card) });
       });
-      skipHeader.onclick = () => {
-        const isHidden = skippedList.classList.contains('hidden');
-        if (isHidden) {
+      const setExpanded = (expanded: boolean) => {
+        if (expanded) {
           skippedList.classList.remove('hidden');
           skippedList.classList.add('visible');
         } else {
           skippedList.classList.remove('visible');
           skippedList.classList.add('hidden');
         }
-        toggle.textContent = isHidden ? '▾' : '▸';
+        toggle.textContent = expanded ? '▾' : '▸';
+        skipHeader.setAttr('aria-expanded', String(expanded));
       };
+      skipHeader.onclick = () => setExpanded(skippedList.classList.contains('hidden'));
+      skipHeader.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        setExpanded(skippedList.classList.contains('hidden'));
+      });
     }
 
     // Show deletion details if deletions were actually performed
@@ -646,9 +674,15 @@ export class SyncModal extends Modal {
       return;
     }
     this.close();
-    const appWithSetting = this.app as AppWithSetting;
-    appWithSetting.setting.open();
-    appWithSetting.setting.openTabById(this.plugin.manifest.id);
+    // The settings pane is an internal API: feature check first, then a
+    // supported instruction when this Obsidian build does not expose it.
+    const settingsApi = asSettingsApi(this.app);
+    if (!settingsApi) {
+      new Notice('Open Settings -> Community plugins -> Panda Zap to change its settings.');
+      return;
+    }
+    settingsApi.open();
+    settingsApi.openTabById(this.plugin.manifest.id);
   }
 
   /**
