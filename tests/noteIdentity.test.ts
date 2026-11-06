@@ -77,7 +77,7 @@ vi.mock('../src/dialogs/ConfirmModal', () => ({
 import PandaZapPlugin from '../src/main';
 import { TFile } from 'obsidian';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
-import { DEFAULT_SETTINGS, createSyncContext, type PandaZapSettings } from '../src/sync/types';
+import { DEFAULT_SETTINGS, createSyncContext } from '../src/sync/types';
 import { installFakeAnki, type FakeAnkiState } from './fakeAnki';
 
 type RenameHandler = (file: unknown, oldPath: string) => unknown;
@@ -293,7 +293,7 @@ describe('note rename migration', () => {
     }));
     const harness = createHarness({ 'other/renamed.md': 'Q: Q\nA: A' });
     const tagHelper = new AnkiConnector(
-      { ...DEFAULT_SETTINGS } as PandaZapSettings,
+      { ...DEFAULT_SETTINGS },
       harness.app as never
     ) as unknown as { getSourceTag(p: string): string };
     const oldTag = tagHelper.getSourceTag('folder/note.md');

@@ -32,6 +32,7 @@ import {
   type CardSyncInfo,
   type SyncAnalysis,
   type SyncContext,
+  type SyncRunOptions,
 } from '../src/sync/types';
 
 type ModalInternals = {
@@ -104,9 +105,11 @@ describe('SyncModal deletion handling', () => {
       true,
       context,
       ['11'],
+      // The casts are type-only: expect.objectContaining returns any, which the
+      // nested-matcher rule rejects inside objectContaining's generic parameter.
       expect.objectContaining({
-        abort: expect.objectContaining({ cancelled: false }),
-        onProgress: expect.any(Function),
+        abort: expect.objectContaining({ cancelled: false }) as SyncRunOptions['abort'],
+        onProgress: expect.any(Function) as SyncRunOptions['onProgress'],
       })
     );
   });

@@ -21,8 +21,8 @@ const defaultSettings: PandaZapSettings = {
 describe('extractQACardsFromText', () => {
   it('should handle empty or null input gracefully', () => {
     expect(extractQACardsFromText('', defaultSettings)).toEqual([]);
-    expect(extractQACardsFromText(null as any, defaultSettings)).toEqual([]);
-    expect(extractQACardsFromText('test', null as any)).toEqual([]);
+    expect(extractQACardsFromText(null, defaultSettings)).toEqual([]);
+    expect(extractQACardsFromText('test', null)).toEqual([]);
   });
 
   it('should extract single line Q&A cards', () => {

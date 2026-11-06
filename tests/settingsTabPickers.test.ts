@@ -133,14 +133,14 @@ class FakeSetting {
   addButton(callback: (button: FakeButton) => unknown): this {
     const button = new FakeButton();
     this.buttons.push(button);
-    callback(button as never);
+    callback(button);
     return this;
   }
 
   addToggle(callback: (toggle: FakeToggle) => unknown): this {
     const toggle = new FakeToggle();
     this.toggles.push(toggle);
-    callback(toggle as never);
+    callback(toggle);
     return this;
   }
 
