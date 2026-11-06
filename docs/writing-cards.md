@@ -172,13 +172,30 @@ By default, cards go to a deck named after your note's folder and filename. You 
 
 | Priority | Method | Example |
 | -------- | ------ | ------- |
-| 1 | First-line override | `Deck::Biology/Plants` on the very first line |
-| 2 | Folder-based (if enabled) | `Biology/Plants/Photosynthesis.md` becomes deck `Biology/Plants::Photosynthesis` |
-| 3 | Default deck | The **Default deck** setting in the plugin settings (default: `Default`) |
+| 1 | Frontmatter `deck:` | `deck: Biology/Plants` in a leading YAML frontmatter block |
+| 2 | First-line override | `Deck::Biology/Plants` on the first line after the frontmatter |
+| 3 | Folder-based (if enabled) | `Biology/Plants/Photosynthesis.md` becomes deck `Biology/Plants::Photosynthesis` |
+| 4 | Default deck | The **Default deck** setting in the plugin settings (default: `Default`) |
 
-### Deck override on first line
+### Deck override in frontmatter
 
-Put `Deck::name` on the first line of your note to send all cards in that note to a specific deck:
+Put a `deck:` key in the YAML frontmatter at the top of the note:
+
+```markdown
+---
+deck: Spanish/Vocab
+---
+
+Q: Hello A: Hola
+Q: Goodbye A: Adios
+Q: Thank you A: Gracias
+```
+
+Single and double quotes work too: `deck: "Spanish/Vocab"`.
+
+### Deck override on the first line
+
+Without a frontmatter `deck:` key, put `Deck::name` on the first line of the note body (the first line after the frontmatter block, if there is one) to send all cards in that note to a specific deck:
 
 ```markdown
 Deck::Spanish/Vocab
@@ -187,12 +204,28 @@ Q: Goodbye A: Adios
 Q: Thank you A: Gracias
 ```
 
-A leading YAML frontmatter block means the `Deck::` line is no longer first, so the override is ignored.
+```markdown
+---
+tags: [spanish]
+---
+Deck::Spanish/Vocab
+Q: Hello A: Hola
+```
 
-Use slashes for nested decks:
+If both forms are present, the frontmatter `deck:` wins. A `deck:` key in the note body, below the header, is ordinary text and is never used as an override. The **Deck override word** setting changes the word before `::` (default: `Deck`); the frontmatter key is always `deck:`.
+
+Use slashes or `::` for nested decks:
 
 ```markdown
 Deck::Biology/Cell-Biology
+Q: What is the powerhouse of the cell? A: Mitochondrion
+```
+
+```markdown
+---
+deck: Biology::Cell-Biology
+---
+
 Q: What is the powerhouse of the cell? A: Mitochondrion
 ```
 
@@ -262,8 +295,9 @@ A question with no content produces no card.
 | Single line | `Q: Question A: Answer` |
 | Multi-line | `Q: Question` then answer on next lines |
 | With image | `I: [[image.png]]` |
-| Deck override | `Deck::Name` on first line |
-| Nested deck | `Deck::Subject/Topic` |
+| Deck override (frontmatter) | `deck: Name` in leading YAML frontmatter |
+| Deck override (first line) | `Deck::Name` on first line after frontmatter |
+| Nested deck | `Deck::Subject/Topic` or `deck: Subject/Topic` |
 | Bold labels | `*Q:* Question *A:* Answer` |
 
 ## What is not supported

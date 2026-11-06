@@ -24,6 +24,9 @@ export interface FakeAnkiState {
   notes: FakeNote[];
   cards: FakeCard[];
   media: string[];
+  /** Names returned by deckNames and modelNames, for the settings pickers. */
+  decks: string[];
+  models: string[];
   /** Actions that throw, simulating Anki being unreachable or a failed call. */
   failActions: Set<string>;
   /** Fails findNotes whose query matches, to poison a single migration. */
@@ -64,12 +67,14 @@ function isInDeck(deckName: string, query: string): boolean {
 
 export function installFakeAnki(
   requestUrl: RequestUrlMock,
-  initial: Partial<Pick<FakeAnkiState, 'notes' | 'cards' | 'media'>> = {}
+  initial: Partial<Pick<FakeAnkiState, 'notes' | 'cards' | 'media' | 'decks' | 'models'>> = {}
 ): FakeAnkiState {
   const state: FakeAnkiState = {
     notes: initial.notes ?? [],
     cards: initial.cards ?? [],
     media: initial.media ?? [],
+    decks: initial.decks ?? ['Default'],
+    models: initial.models ?? ['Basic'],
     failActions: new Set(),
     requests: [],
   };
@@ -85,6 +90,10 @@ export function installFakeAnki(
     switch (request.action) {
       case 'version':
         return ok(6);
+      case 'deckNames':
+        return ok(state.decks);
+      case 'modelNames':
+        return ok(state.models);
       case 'findNotes': {
         const query = String(request.params?.query ?? '');
         if (state.failFindNotes?.(query)) throw new Error('findNotes failed');

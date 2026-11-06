@@ -1,10 +1,12 @@
-import { PluginSettingTab, App, Setting, Notice, SettingDefinitionItem } from 'obsidian';
+import { PluginSettingTab, App, Setting, Notice } from 'obsidian';
+import type { SettingDefinitionItem, DropdownComponent } from 'obsidian';
 import PandaZapPlugin from '../main';
 import { DEFAULT_SETTINGS, describeConnection } from '../sync/types';
 import { ANKI_CONNECT_VERSION } from '../constants';
 import {
   ANKI_CONNECT_PORT_MAX,
   ANKI_CONNECT_PORT_MIN,
+  buildAnkiConnectUrl,
   markerLabels,
   parseAnkiConnectUrl,
   parsePort,
@@ -26,10 +28,44 @@ const PORT_DESCRIPTION = 'The port where Anki connect is running.';
 const PORT_ERROR = `Port must be a whole number between ${ANKI_CONNECT_PORT_MIN} and ${ANKI_CONNECT_PORT_MAX}.`;
 const DEFAULT_DECK_DESCRIPTION =
   'Deck used for all cards when note-based deck organization is off.';
+const NOTE_TYPE_DESCRIPTION =
+  'The Anki note type/model used when creating new notes (e.g., Basic, Cloze).';
+const PICKER_LOADING_HINT = 'Loading names from Anki...';
+const PICKER_OFFLINE_HINT =
+  'Anki is unreachable. The saved value is kept - check the connection, then use Refresh.';
+
+type PickerKind = 'deck' | 'noteType';
+
+interface PickerLists {
+  key: string;
+  decks: string[];
+  models: string[];
+}
+
+/**
+ * Options for a picker: the names Anki returned plus the saved value. The
+ * saved value is always kept, even when it is missing from the list, so a
+ * custom value is never lost and stays selected.
+ */
+function pickerOptions(names: readonly string[], savedValue: string): Record<string, string> {
+  const options: Record<string, string> = {};
+  for (const name of names) {
+    if (name) options[name] = name;
+  }
+  const saved = savedValue.trim();
+  if (saved && !Object.prototype.hasOwnProperty.call(options, saved)) options[saved] = saved;
+  return options;
+}
 
 export class PandaZapSettingTab extends PluginSettingTab {
   plugin: PandaZapPlugin;
   private connectionResultEl: HTMLElement;
+  private deckDropdown: DropdownComponent | null = null;
+  private noteTypeDropdown: DropdownComponent | null = null;
+  private pickerSettings: Partial<Record<PickerKind, Setting>> = {};
+  /** Deck and note type names for the connection settings they came from. */
+  private pickerLists: PickerLists | null = null;
+  private pickerLoad: Promise<void> | null = null;
 
   constructor(app: App, plugin: PandaZapPlugin) {
     super(app, plugin);
@@ -94,29 +130,8 @@ export class PandaZapSettingTab extends PluginSettingTab {
         items: [
           {
             name: 'Note type',
-            desc: 'The Anki note type/model used when creating new notes (e.g., Basic, Cloze).',
-            render: (setting) => {
-              setting.addText((text) => {
-                const t = text
-                  .setPlaceholder('Basic')
-                  .setValue(this.plugin.settings.noteType)
-                  .onChange((value) => {
-                    this.plugin.settings.noteType = value.trim();
-                    void this.plugin.saveSettings();
-                  });
-
-                const inputEl = (t as TextComponentWithInput).inputEl;
-                inputEl.addEventListener('blur', () => {
-                  if (!inputEl.value || !inputEl.value.trim()) {
-                    const def = DEFAULT_SETTINGS.noteType;
-                    t.setValue(def);
-                    this.plugin.settings.noteType = def;
-                    void this.plugin.saveSettings();
-                    new Notice('Note type cannot be empty - restored to default');
-                  }
-                });
-              });
-            },
+            desc: NOTE_TYPE_DESCRIPTION,
+            render: (setting) => this.renderPicker(setting, 'noteType'),
           },
         ],
       },
@@ -214,37 +229,141 @@ export class PandaZapSettingTab extends PluginSettingTab {
   }
 
   private renderDefaultDeckSetting(setting: Setting): void {
-    setting
-      .setName('Default deck')
-      .setDesc(DEFAULT_DECK_DESCRIPTION)
-      .addText((text) => {
-        const inputEl = (text as TextComponentWithInput).inputEl;
-        const showDescription = (error: string | null) => {
-          if (setting.descEl) setting.descEl.textContent = error ?? DEFAULT_DECK_DESCRIPTION;
-        };
+    setting.setName('Default deck').setDesc(DEFAULT_DECK_DESCRIPTION);
+    this.renderPicker(setting, 'deck');
+  }
 
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.defaultDeck)
-          .setValue(this.plugin.settings.defaultDeck)
-          .onChange((value) => {
-            const deck = value.trim();
-            const error = validateDeckName(deck);
-            if (error) {
-              showDescription(error);
-              return;
-            }
-            this.plugin.settings.defaultDeck = deck;
-            void this.plugin.saveSettings();
-            showDescription(null);
-          });
-
-        inputEl.addEventListener('blur', () => {
-          const error = validateDeckName(inputEl.value);
-          inputEl.value = this.plugin.settings.defaultDeck;
-          showDescription(null);
-          if (error) new Notice(error);
-        });
+  /**
+   * Renders a dropdown for one picker. The saved value is an option from the
+   * first paint, so the row never waits on Anki and never loses a custom value;
+   * the full list replaces it once the read succeeds. Refresh retries a failed
+   * read without leaving the tab.
+   */
+  private renderPicker(setting: Setting, kind: PickerKind): void {
+    this.pickerSettings[kind] = setting;
+    setting.addDropdown((dropdown) => {
+      if (kind === 'deck') this.deckDropdown = dropdown;
+      else this.noteTypeDropdown = dropdown;
+      this.fillPicker(kind, dropdown);
+      dropdown.onChange((value) => {
+        this.applyPickerValue(kind, value);
       });
+    });
+    setting.addButton((button) =>
+      button.setButtonText('Refresh').onClick(() => {
+        void this.refreshPickerLists(true);
+      })
+    );
+    void this.refreshPickerLists(false);
+  }
+
+  private pickerValue(kind: PickerKind): string {
+    return kind === 'deck' ? this.plugin.settings.defaultDeck : this.plugin.settings.noteType;
+  }
+
+  private pickerDescription(kind: PickerKind): string {
+    return kind === 'deck' ? DEFAULT_DECK_DESCRIPTION : NOTE_TYPE_DESCRIPTION;
+  }
+
+  private pickerNames(kind: PickerKind): string[] {
+    if (!this.pickerLists || this.pickerLists.key !== this.currentPickerKey()) return [];
+    return kind === 'deck' ? this.pickerLists.decks : this.pickerLists.models;
+  }
+
+  private fillPicker(kind: PickerKind, dropdown: DropdownComponent): void {
+    const saved = this.pickerValue(kind);
+    dropdown.selectEl.empty();
+    dropdown.addOptions(pickerOptions(this.pickerNames(kind), saved));
+    dropdown.setValue(saved);
+  }
+
+  private fillPickers(): void {
+    if (this.deckDropdown) this.fillPicker('deck', this.deckDropdown);
+    if (this.noteTypeDropdown) this.fillPicker('noteType', this.noteTypeDropdown);
+  }
+
+  private applyPickerValue(kind: PickerKind, value: string): void {
+    const selected = value.trim();
+    if (!selected) {
+      // An empty selection is never saved: restore the stored value instead.
+      const dropdown = kind === 'deck' ? this.deckDropdown : this.noteTypeDropdown;
+      dropdown?.setValue(this.pickerValue(kind));
+      return;
+    }
+    if (kind === 'deck') {
+      const error = validateDeckName(selected);
+      if (error) {
+        this.setPickerHint(kind, error);
+        return;
+      }
+      this.plugin.settings.defaultDeck = selected;
+    } else {
+      this.plugin.settings.noteType = selected;
+    }
+    void this.plugin.saveSettings();
+    this.setPickerHint(kind, null);
+  }
+
+  private setPickerHint(kind: PickerKind, hint: string | null): void {
+    const setting = this.pickerSettings[kind];
+    if (setting) setting.descEl.textContent = hint ?? this.pickerDescription(kind);
+  }
+
+  private setPickerHints(hint: string | null): void {
+    this.setPickerHint('deck', hint);
+    this.setPickerHint('noteType', hint);
+  }
+
+  /** Connection settings that decide which Anki instance a picker reads. */
+  private currentPickerKey(): string {
+    return buildAnkiConnectUrl(this.plugin.settings);
+  }
+
+  /**
+   * Fills the pickers from Anki, reusing the session cache unless forced. A
+   * failure keeps the saved values and shows an inline hint; rendering and
+   * saving stay available offline.
+   */
+  private async refreshPickerLists(force: boolean): Promise<void> {
+    if (!this.deckDropdown && !this.noteTypeDropdown) return;
+    const key = this.currentPickerKey();
+    if (!force && this.pickerLists?.key === key) {
+      this.fillPickers();
+      return;
+    }
+    if (this.pickerLoad !== null) {
+      // One read serves every caller; the owner reports its outcome.
+      try {
+        await this.pickerLoad;
+      } catch {
+        // The owning call already showed the hint.
+      }
+      return;
+    }
+
+    this.setPickerHints(PICKER_LOADING_HINT);
+    // A read for new connection settings starts from the saved values, so the
+    // names of the previous Anki instance cannot flash as the new ones.
+    this.fillPickers();
+    const load = this.loadPickerLists(key);
+    this.pickerLoad = load;
+    try {
+      await load;
+      this.fillPickers();
+      this.setPickerHints(null);
+    } catch {
+      this.setPickerHints(PICKER_OFFLINE_HINT);
+    } finally {
+      if (this.pickerLoad === load) this.pickerLoad = null;
+    }
+  }
+
+  private async loadPickerLists(key: string): Promise<void> {
+    const { deckNames, modelNames } = await this.plugin.listAnkiNames();
+    // A read that started before the connection changed must not replace the
+    // lists of the new connection.
+    if (key !== this.currentPickerKey()) return;
+    this.pickerLists = { key, decks: deckNames, models: modelNames };
   }
 
   private renderAnkiConnectUrlSetting(setting: Setting): void {
@@ -276,6 +395,8 @@ export class PandaZapSettingTab extends PluginSettingTab {
           inputEl.value = this.plugin.settings.ankiConnectUrl;
           showDescription(null);
           if (isInvalid) new Notice(URL_ERROR);
+          // Fills from the session cache when the endpoint did not change.
+          else void this.refreshPickerLists(false);
         });
       });
   }
@@ -309,6 +430,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
           inputEl.value = String(this.plugin.settings.ankiConnectPort);
           showDescription(null);
           if (isInvalid) new Notice(PORT_ERROR);
+          else void this.refreshPickerLists(false);
         });
       });
   }
@@ -423,6 +545,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
         cls: 'connection-details',
         text: `${this.plugin.settings.ankiConnectUrl}:${this.plugin.settings.ankiConnectPort}`,
       });
+      void this.refreshPickerLists(true);
       return;
     }
 
