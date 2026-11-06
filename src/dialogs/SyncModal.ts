@@ -340,9 +340,16 @@ export class SyncModal extends Modal {
         try {
           const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
           const buttonContainer = this.contentEl.querySelector('.panda-zap-button-container');
+          const resultContainer = this.contentEl.querySelector('.panda-zap-results');
           if (summaryContainer?.instanceOf(HTMLElement))
             summaryContainer.classList.remove('hidden');
           if (buttonContainer?.instanceOf(HTMLElement)) buttonContainer.classList.remove('hidden');
+          // A dead progress row and Cancel button must not outlive the failed run.
+          if (resultContainer?.instanceOf(HTMLElement)) {
+            resultContainer.empty();
+            resultContainer.classList.remove('visible');
+            resultContainer.classList.add('hidden');
+          }
         } catch {
           // ignore sync error
         }
@@ -469,6 +476,9 @@ export class SyncModal extends Modal {
   }
 
   private async hideUiAndSync(syncFn: (runOptions: SyncRunOptions) => Promise<SyncResult>) {
+    // A closed modal has emptied contentEl: starting the run would change Anki
+    // with no progress row, no Cancel button and no way to report back.
+    if (this.closed) return;
     // Hide summary and action buttons now that the user has confirmed (or there were no deletions)
     const summaryContainer = this.contentEl.querySelector('.panda-zap-summary');
     const buttonContainerEl = this.contentEl.querySelector('.panda-zap-button-container');
@@ -521,9 +531,12 @@ export class SyncModal extends Modal {
       this.syncRunning = false;
     }
 
+    // A click on Cancel that lands after the last card is not a cancel of
+    // anything: the run already finished.
+    const isCancelled = abort.cancelled && done < total;
     const notice = describeSyncResultNotice(
       result,
-      abort.cancelled ? { done, total, cancelled: true } : undefined
+      isCancelled ? { done, total, cancelled: true } : undefined
     );
     const finalResultContainer = this.closed
       ? null
@@ -608,6 +621,12 @@ export class SyncModal extends Modal {
   }
 
   private openSettings() {
+    if (this.syncRunning) {
+      // close() is refused mid-run, so opening settings here would stack the
+      // settings pane over a live sync.
+      new Notice('Cancel the sync first');
+      return;
+    }
     this.close();
     const appWithSetting = this.app as AppWithSetting;
     appWithSetting.setting.open();

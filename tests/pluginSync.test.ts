@@ -288,8 +288,22 @@ describe('sync dialog single instance', () => {
     expect(running.open).toHaveBeenCalledTimes(1);
     expect(openSyncModal).not.toHaveBeenCalled();
     expect(notices).toContain(
-      'A sync dialog is already open. Close it before starting another sync.'
+      'A sync dialog is already open. Cancel the running sync or close the dialog.'
     );
+  });
+
+  it('does not keep a modal that failed to open', () => {
+    const plugin = createPlugin(connectorStub());
+    const broken = {
+      open: () => {
+        throw new Error('open failed');
+      },
+    } as unknown as SyncModal;
+
+    expect(() => plugin.showSyncModal(broken)).toThrow('open failed');
+
+    plugin.openSyncDialog();
+    expect(openSyncModal).toHaveBeenCalledTimes(1);
   });
 
   it('opens a new dialog after the active modal closed', () => {
@@ -342,6 +356,7 @@ describe('batch sync progress and cancellation', () => {
     });
 
     expect(progress).toEqual([
+      [0, 3],
       [1, 3],
       [2, 3],
       [3, 3],

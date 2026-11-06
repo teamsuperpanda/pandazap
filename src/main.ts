@@ -103,7 +103,13 @@ export default class PandaZapPlugin extends Plugin {
       return;
     }
     this.activeSyncModal = modal;
-    modal.open();
+    try {
+      modal.open();
+    } catch (error) {
+      // A synchronous open failure must not poison the guard for the session.
+      this.activeSyncModal = null;
+      throw error;
+    }
   }
 
   /** Called by the modal on close, so the next command can open a dialog. */
@@ -112,7 +118,7 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   private reportSyncDialogOpen(): void {
-    new Notice('A sync dialog is already open. Close it before starting another sync.');
+    new Notice('A sync dialog is already open. Cancel the running sync or close the dialog.');
   }
 
   private getSelectedNotePaths(): string[] {
@@ -260,14 +266,18 @@ export default class PandaZapPlugin extends Plugin {
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
-    const connection = await this.ankiConnector.testConnection();
-    if (connection.status !== 'ok') {
-      throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
-    }
     const result: SyncResult = { cards: [] };
     const totalCards = bContext.totalCards;
     const onProgress = runOptions?.onProgress;
     const abort = runOptions?.abort;
+    // Publish the batch total before the connection test, so a cancel during
+    // that test still reports N of M cards instead of 0 of 0.
+    onProgress?.(0, totalCards);
+
+    const connection = await this.ankiConnector.testConnection();
+    if (connection.status !== 'ok') {
+      throw new Error(describeConnection(connection, ANKI_CONNECT_VERSION));
+    }
 
     try {
       let noteStart = 0;

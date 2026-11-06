@@ -199,6 +199,17 @@ describe('SyncModal deletion handling', () => {
     await run;
   });
 
+  it('does not start a sync once the modal closed', async () => {
+    const context = createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'mine.md');
+    const plugin = pluginStub(context, analysis(), analysis());
+    const modal = createModal(plugin);
+    (modal as unknown as { closed: boolean }).closed = true;
+
+    await modal.performSingleSync();
+
+    expect(plugin.syncCardsToAnki).not.toHaveBeenCalled();
+  });
+
   it('clears the active modal when it closes', () => {
     const plugin = pluginStub(createSyncContext([]), analysis(), analysis());
     const modal = new SyncModal({} as never, plugin as never);
