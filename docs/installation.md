@@ -38,8 +38,8 @@ npm run build
 
 ```bash
 # Replace /path/to/your/vault with your vault path
-mkdir -p /path/to/your/vault/.obsidian/plugins/panda-zap
-cp main.js manifest.json styles.css /path/to/your/vault/.obsidian/plugins/panda-zap/
+mkdir -p /path/to/your/vault/.obsidian/plugins/pandazap
+cp main.js manifest.json styles.css /path/to/your/vault/.obsidian/plugins/pandazap/
 ```
 
 4. In Obsidian: Settings → Community plugins → Installed plugins → enable "Panda Zap".

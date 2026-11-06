@@ -37,7 +37,7 @@ src/
 ├── main.ts            Plugin entry point
 ├── dialogs/           Modal dialogs (SyncModal, PreviewModal, SettingsTab)
 ├── sync/              Anki sync logic (AnkiConnector, CardExtractor)
-├── constants.ts       CSS classes, magic strings
+├── constants.ts       Five scalar constants (AnkiConnect version, timeout, default port/URL, plugin tag)
 styles.css             Plugin styles
 ```
 
