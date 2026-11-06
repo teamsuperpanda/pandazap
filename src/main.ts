@@ -5,7 +5,6 @@ import { AnkiConnector } from './sync/AnkiConnector';
 import { CardExtractor } from './sync/CardExtractor';
 import {
   PandaZapSettings,
-  DEFAULT_SETTINGS,
   AnkiCard,
   SyncAnalysis,
   SyncContext,
@@ -19,6 +18,7 @@ import {
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
 import { ANKI_CONNECT_VERSION } from './constants';
+import { normalizeSettings } from './settings';
 
 export default class PandaZapPlugin extends Plugin {
   settings: PandaZapSettings;
@@ -120,14 +120,13 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      (await this.loadData()) as Partial<PandaZapSettings>
-    );
+    this.settings = normalizeSettings(await this.loadData());
   }
 
   saveSettings(): Promise<void> {
+    // Rejected in-memory values (a port typed as 70000, an empty note type) must
+    // never reach disk, and memory must keep matching what disk holds.
+    this.settings = normalizeSettings(this.settings);
     const settingsSnapshot = { ...this.settings };
     const saveAttempt = this.settingsSaveQueue.then(() => this.saveData(settingsSnapshot));
 

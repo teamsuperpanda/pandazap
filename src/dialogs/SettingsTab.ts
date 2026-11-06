@@ -2,10 +2,26 @@ import { PluginSettingTab, App, Setting, Notice, SettingDefinitionItem } from 'o
 import PandaZapPlugin from '../main';
 import { DEFAULT_SETTINGS, describeConnection } from '../sync/types';
 import { ANKI_CONNECT_VERSION } from '../constants';
+import {
+  ANKI_CONNECT_PORT_MAX,
+  ANKI_CONNECT_PORT_MIN,
+  markerLabels,
+  parseAnkiConnectUrl,
+  parsePort,
+  validateDeckOverrideWord,
+  validateMarkerWord,
+} from '../settings';
 
 interface TextComponentWithInput {
   inputEl: HTMLInputElement;
 }
+
+type WordSettingKey = 'deckOverrideWord' | 'questionWord' | 'answerWord' | 'imageWord';
+
+const URL_DESCRIPTION = 'The URL where Anki connect is running.';
+const URL_ERROR = 'Enter an http(s) URL or a host such as 127.0.0.1:8765.';
+const PORT_DESCRIPTION = 'The port where Anki connect is running.';
+const PORT_ERROR = `Port must be a whole number between ${ANKI_CONNECT_PORT_MIN} and ${ANKI_CONNECT_PORT_MAX}.`;
 
 export class PandaZapSettingTab extends PluginSettingTab {
   plugin: PandaZapPlugin;
@@ -17,6 +33,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
   }
 
   getSettingDefinitions(): SettingDefinitionItem[] {
+    const labels = markerLabels(this.plugin.settings);
     return [
       {
         type: 'group',
@@ -111,54 +128,50 @@ export class PandaZapSettingTab extends PluginSettingTab {
           },
           {
             name: 'Anki connect port',
-            desc: 'The port where Anki connect is running.',
+            desc: PORT_DESCRIPTION,
             render: (setting) => this.renderAnkiConnectPortSetting(setting),
           },
           {
             name: 'Deck override word',
-            desc: `Example: ${this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord}::MyDeck`,
+            desc: `Example: ${this.wordValue('deckOverrideWord')}::MyDeck`,
             render: (setting) =>
               this.renderWordSetting(
                 setting,
                 'deckOverrideWord',
                 'Deck override word',
-                'Deck',
                 (w) => `Example: ${w}::MyDeck`
               ),
           },
           {
             name: 'Question word',
-            desc: `Example: ${this.plugin.settings.questionWord || DEFAULT_SETTINGS.questionWord}: What is the capital of France?`,
+            desc: `Example: ${labels.q}: What is the capital of France?`,
             render: (setting) =>
               this.renderWordSetting(
                 setting,
                 'questionWord',
                 'Question word',
-                'Q',
                 (w) => `Example: ${w}: What is the capital of France?`
               ),
           },
           {
             name: 'Answer word',
-            desc: `Example: ${this.plugin.settings.answerWord || DEFAULT_SETTINGS.answerWord}: Paris`,
+            desc: `Example: ${labels.a}: Paris`,
             render: (setting) =>
               this.renderWordSetting(
                 setting,
                 'answerWord',
                 'Answer word',
-                'A',
                 (w) => `Example: ${w}: Paris`
               ),
           },
           {
             name: 'Image word',
-            desc: `Example: ${this.plugin.settings.imageWord || DEFAULT_SETTINGS.imageWord}: [[my-image.png]]`,
+            desc: `Example: ${labels.i}: [[my-image.png]]`,
             render: (setting) =>
               this.renderWordSetting(
                 setting,
                 'imageWord',
                 'Image word',
-                'I',
                 (w) => `Example: ${w}: [[my-image.png]]`
               ),
           },
@@ -182,69 +195,156 @@ export class PandaZapSettingTab extends PluginSettingTab {
   private renderAnkiConnectUrlSetting(setting: Setting): void {
     setting
       .setName('Anki connect URL')
-      .setDesc('The URL where Anki connect is running.')
-      .addText((text) =>
+      .setDesc(URL_DESCRIPTION)
+      .addText((text) => {
+        const inputEl = (text as TextComponentWithInput).inputEl;
+        const showDescription = (error: string | null) => {
+          if (setting.descEl) setting.descEl.textContent = error ?? URL_DESCRIPTION;
+        };
+
         text
-          .setPlaceholder('http://127.0.0.1')
+          .setPlaceholder(DEFAULT_SETTINGS.ankiConnectUrl)
           .setValue(this.plugin.settings.ankiConnectUrl)
           .onChange((value) => {
-            this.plugin.settings.ankiConnectUrl = value;
+            const url = parseAnkiConnectUrl(value);
+            if (url === null) {
+              showDescription(URL_ERROR);
+              return;
+            }
+            this.plugin.settings.ankiConnectUrl = url;
             void this.plugin.saveSettings();
-          })
-      );
+            showDescription(null);
+          });
+
+        inputEl.addEventListener('blur', () => {
+          const isInvalid = parseAnkiConnectUrl(inputEl.value) === null;
+          inputEl.value = this.plugin.settings.ankiConnectUrl;
+          showDescription(null);
+          if (isInvalid) new Notice(URL_ERROR);
+        });
+      });
   }
 
   private renderAnkiConnectPortSetting(setting: Setting): void {
     setting
       .setName('Anki connect port')
-      .setDesc('The port where Anki connect is running.')
-      .addText((text) =>
+      .setDesc(PORT_DESCRIPTION)
+      .addText((text) => {
+        const inputEl = (text as TextComponentWithInput).inputEl;
+        const showDescription = (error: string | null) => {
+          if (setting.descEl) setting.descEl.textContent = error ?? PORT_DESCRIPTION;
+        };
+
         text
-          .setPlaceholder('8765')
-          .setValue(this.plugin.settings.ankiConnectPort.toString())
+          .setPlaceholder(String(DEFAULT_SETTINGS.ankiConnectPort))
+          .setValue(String(this.plugin.settings.ankiConnectPort))
           .onChange((value) => {
-            this.plugin.settings.ankiConnectPort = parseInt(value) || 8765;
+            const port = parsePort(value);
+            if (port === null) {
+              showDescription(PORT_ERROR);
+              return;
+            }
+            this.plugin.settings.ankiConnectPort = port;
             void this.plugin.saveSettings();
-          })
-      );
+            showDescription(null);
+          });
+
+        inputEl.addEventListener('blur', () => {
+          const isInvalid = parsePort(inputEl.value) === null;
+          inputEl.value = String(this.plugin.settings.ankiConnectPort);
+          showDescription(null);
+          if (isInvalid) new Notice(PORT_ERROR);
+        });
+      });
   }
 
   private renderWordSetting(
     setting: Setting,
-    key: 'deckOverrideWord' | 'questionWord' | 'answerWord' | 'imageWord',
+    key: WordSettingKey,
     label: string,
-    placeholder: string,
     example: (word: string) => string
   ): void {
-    const current = this.plugin.settings[key] || DEFAULT_SETTINGS[key];
     setting
       .setName(label)
-      .setDesc(example(current))
+      .setDesc(example(this.wordValue(key)))
       .addText((text) => {
+        const inputEl = (text as TextComponentWithInput).inputEl;
+        const showDescription = (error: string | null) => {
+          if (setting.descEl) setting.descEl.textContent = error ?? example(this.wordValue(key));
+        };
+
         text
-          .setPlaceholder(placeholder)
-          .setValue(this.plugin.settings[key])
+          .setPlaceholder(DEFAULT_SETTINGS[key])
+          .setValue(this.wordValue(key))
           .onChange((value) => {
-            if (key !== 'deckOverrideWord' && (!value || !value.trim())) return;
-            this.plugin.settings[key] = key === 'deckOverrideWord' ? value : value.trim();
+            const word = value.trim();
+            const formatError = this.wordFormatError(key, word);
+            if (formatError) {
+              showDescription(formatError);
+              return;
+            }
+            // Duplicates are applied with a warning so question and answer words
+            // can be swapped; the typed text stays visible either way.
+            this.plugin.settings[key] = word;
             void this.plugin.saveSettings();
-            const w = (value && value.trim()) || DEFAULT_SETTINGS[key];
-            if (setting.descEl) setting.descEl.textContent = example(w);
+            showDescription(this.wordConflictWarning(key, word));
           });
 
-        const inputEl = (text as TextComponentWithInput).inputEl;
         inputEl.addEventListener('blur', () => {
-          if (!inputEl.value || !inputEl.value.trim()) {
-            const def = DEFAULT_SETTINGS[key];
-            text.setValue(def);
-            this.plugin.settings[key] = def;
-            void this.plugin.saveSettings();
-            if (setting.descEl) setting.descEl.textContent = example(def);
-            new Notice(`${label} cannot be empty - restored to default`);
-          }
-          if (key !== 'deckOverrideWord') showMarkerValidation(this.plugin);
+          const word = inputEl.value.trim();
+          const formatError = this.wordFormatError(key, word);
+          const conflict = formatError ? null : this.wordConflictWarning(key, word);
+          inputEl.value = this.wordValue(key);
+          showDescription(conflict);
+          if (formatError) new Notice(formatError);
+          else if (conflict) new Notice(conflict);
         });
       });
+  }
+
+  private wordValue(key: WordSettingKey): string {
+    if (key === 'deckOverrideWord') {
+      return this.plugin.settings.deckOverrideWord || DEFAULT_SETTINGS.deckOverrideWord;
+    }
+    const labels = markerLabels(this.plugin.settings);
+    if (key === 'questionWord') return labels.q;
+    if (key === 'answerWord') return labels.a;
+    return labels.i;
+  }
+
+  private wordFormatError(key: WordSettingKey, word: string): string | null {
+    return key === 'deckOverrideWord' ? validateDeckOverrideWord(word) : validateMarkerWord(word);
+  }
+
+  private wordConflictWarning(key: WordSettingKey, word: string): string | null {
+    if (key === 'deckOverrideWord') return null;
+
+    const labels = markerLabels(this.plugin.settings);
+    const conflicts: Record<Exclude<WordSettingKey, 'deckOverrideWord'>, [string, string][]> = {
+      questionWord: [
+        [labels.a, 'answer'],
+        [labels.i, 'image'],
+      ],
+      answerWord: [
+        [labels.q, 'question'],
+        [labels.i, 'image'],
+      ],
+      imageWord: [
+        [labels.q, 'question'],
+        [labels.a, 'answer'],
+      ],
+    };
+    const name = {
+      questionWord: 'Question word',
+      answerWord: 'Answer word',
+      imageWord: 'Image word',
+    }[key];
+    for (const [other, otherName] of conflicts[key]) {
+      if (word.toLowerCase() === other.toLowerCase()) {
+        return `${name} matches the ${otherName} word. Cards may not parse reliably.`;
+      }
+    }
+    return null;
   }
 
   private async testConnection(): Promise<void> {
@@ -283,15 +383,4 @@ export class PandaZapSettingTab extends PluginSettingTab {
       text: describeConnection(state, ANKI_CONNECT_VERSION),
     });
   }
-}
-
-function showMarkerValidation(plugin: PandaZapPlugin): void {
-  const q = (plugin.settings.questionWord || '').trim().toLowerCase();
-  const a = (plugin.settings.answerWord || '').trim().toLowerCase();
-  const i = (plugin.settings.imageWord || '').trim().toLowerCase();
-  const errors: string[] = [];
-  if (q && a && q === a) errors.push('Question word and answer word must be different.');
-  if (q && i && q === i) errors.push('Question word and image word must be different.');
-  if (a && i && a === i) errors.push('Answer word and image word must be different.');
-  if (errors.length > 0) new Notice(errors.join('; '));
 }

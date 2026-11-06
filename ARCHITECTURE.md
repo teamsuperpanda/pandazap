@@ -9,6 +9,7 @@ pandazap/
 ├── src/                    # Main application source code
 │   ├── main.ts             # Plugin entry: PandaZapPlugin extends Plugin
 │   ├── constants.ts        # AnkiConnect version, timeouts, defaults, plugin tag
+│   ├── settings.ts         # Settings normalization, marker labels, port/URL helpers
 │   ├── dialogs/            # Modal UI components
 │   │   ├── SyncModal.ts    # Main sync dialog: connection -> analysis -> preview -> sync
 │   │   ├── PreviewModal.ts # Card change preview (add/update/delete) with collapsible sections
@@ -26,6 +27,7 @@ pandazap/
 │   ├── markers.test.ts     # Regex building, custom markers, escaping, boundaries
 │   ├── imageUtils.test.ts  # Filename sanitization, resolution, oversize rejection
 │   ├── types.test.ts       # Default settings, enums, sync context immutability
+│   ├── settings.test.ts    # Settings normalization, marker labels, port parsing
 │   ├── settingsPersistence.test.ts # Snapshot serialization, queue continuation
 │   ├── validation.test.ts  # Valid/invalid card combinations
 │   ├── ankiConnector.test.ts # AnkiConnect integration tests

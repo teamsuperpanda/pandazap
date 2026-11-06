@@ -19,6 +19,8 @@ import {
   REQUEST_TIMEOUT_MS,
   RETRY_BACKOFF_BASE_MS,
 } from '../constants';
+import { buildAnkiConnectUrl } from '../settings';
+import { escapeRegex } from './markers';
 import { stableHash } from './hashUtils';
 import { withTimeout } from './requestTimeout';
 import {
@@ -574,27 +576,9 @@ export class AnkiConnector {
     if (!noteContent || !this.settings.deckOverrideWord) return undefined;
     const nl = noteContent.indexOf('\n');
     const firstLine = (nl === -1 ? noteContent : noteContent.slice(0, nl)).replace(/\r$/, '');
-    const esc = this.settings.deckOverrideWord.replace(/[.*+?^${}(|[\]\\]/g, '\\$&');
+    const esc = escapeRegex(this.settings.deckOverrideWord);
     const match = firstLine.match(new RegExp(`^${esc}::\\s*(.+)$`, 'i'));
     return match?.[1]?.trim().replace(/\//g, '::') || undefined;
-  }
-
-  private buildAnkiConnectUrl(): string {
-    try {
-      const maybeUrl = String(this.settings.ankiConnectUrl || 'http://127.0.0.1');
-      let u: URL;
-      try {
-        u = new URL(maybeUrl);
-      } catch {
-        u = new URL(`http://${maybeUrl}`);
-      }
-      if ((!u.port || u.port === '') && this.settings.ankiConnectPort) {
-        u.port = String(this.settings.ankiConnectPort);
-      }
-      return u.toString();
-    } catch {
-      return `http://127.0.0.1:${this.settings.ankiConnectPort || 8765}`;
-    }
   }
 
   private sleep(ms: number) {
@@ -605,7 +589,7 @@ export class AnkiConnector {
     action: string,
     params?: Record<string, unknown>
   ): Promise<unknown> {
-    const url = this.buildAnkiConnectUrl();
+    const url = buildAnkiConnectUrl(this.settings);
     const body = JSON.stringify({ action, version: ANKI_CONNECT_VERSION, params });
     const timeoutMessage = `Anki Connect request "${action}" timed out after ${REQUEST_TIMEOUT_MS} ms. Make sure Anki is running with the AnkiConnect addon and that ${url} is reachable.`;
 

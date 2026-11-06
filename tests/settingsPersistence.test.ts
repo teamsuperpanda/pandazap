@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { saveData } = vi.hoisted(() => ({ saveData: vi.fn() }));
+const { saveData, loadData } = vi.hoisted(() => ({ saveData: vi.fn(), loadData: vi.fn() }));
 
 vi.mock('obsidian', () => ({
   MarkdownView: class {},
   Plugin: class {
     saveData = saveData;
+    loadData = loadData;
   },
 }));
 
@@ -32,6 +33,37 @@ function createPlugin(): PandaZapPlugin {
 }
 
 describe('settings persistence', () => {
+  it('normalizes corrupt stored data on load', async () => {
+    loadData.mockReset();
+    loadData.mockResolvedValue({
+      ankiConnectPort: '9000',
+      questionWord: '  ',
+      noteType: null,
+      unknownKey: 'ignored',
+    });
+    const plugin = new PandaZapPlugin({} as never, {} as never);
+
+    await plugin.loadSettings();
+
+    expect(plugin.settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      ankiConnectPort: 9000,
+    });
+  });
+
+  it('normalizes settings in memory and on disk before writing', async () => {
+    saveData.mockReset();
+    saveData.mockResolvedValue(undefined);
+    const plugin = createPlugin();
+    plugin.settings.ankiConnectPort = 70000;
+    plugin.settings.questionWord = 'Q:';
+
+    await plugin.saveSettings();
+
+    expect(plugin.settings).toEqual(DEFAULT_SETTINGS);
+    expect(saveData).toHaveBeenCalledWith(DEFAULT_SETTINGS);
+  });
+
   it('serializes point-in-time snapshots so the newest edit is saved last', async () => {
     const firstWrite = deferred();
     saveData.mockReset();
