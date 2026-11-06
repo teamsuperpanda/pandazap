@@ -9,9 +9,10 @@ export interface AnkiCard {
 
 /** Shape of a single note returned by Anki Connect's notesInfo action */
 export interface AnkiNoteInfo {
-  noteId: string;
-  noteIds?: string[];
-  id?: string;
+  /** Anki Connect returns a number, older responses and tests may use strings. */
+  noteId: string | number;
+  noteIds?: Array<string | number>;
+  id?: string | number;
   fields: {
     Front?: { value: string };
     Back?: { value: string };

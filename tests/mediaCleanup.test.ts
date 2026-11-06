@@ -90,12 +90,15 @@ describe('referenced media extraction', () => {
       Back: '<img src="pandazap_one.png"><br><img src=\'pandazap_two.png\'>',
       Extra:
         '<img src="pandazap_one.png"><img src="https://cdn.example.com/photo.png"><img src="data:image/png;base64,AAAA">',
+      Later: '<IMG alt="case" SRC="pandazap_case.png"><img data-id="x" src="pandazap_late.png">',
     });
 
     const referenced = await createConnector().getReferencedMediaFiles();
 
     expect(referenced.has('pandazap_one.png')).toBe(true);
     expect(referenced.has('pandazap_two.png')).toBe(true);
+    expect(referenced.has('pandazap_case.png')).toBe(true);
+    expect(referenced.has('pandazap_late.png')).toBe(true);
     expect(referenced.has('photo.png')).toBe(false);
   });
 
@@ -191,5 +194,49 @@ describe('orphaned media cleanup', () => {
 
     expect(confirm).not.toHaveBeenCalled();
     expect(notices).toContain('No orphaned Panda Zap media to delete');
+  });
+
+  it('keeps a file that only an untagged note references', async () => {
+    anki.media = ['pandazap_untagged.png'];
+    anki.notes.push({
+      noteId: '9',
+      front: 'Q',
+      back: '<img src="pandazap_untagged.png">',
+      tags: ['other'],
+      cards: [],
+    });
+    const plugin = createPlugin(createConnector());
+
+    await plugin.cleanUpOrphanedMedia();
+
+    expect(deleteRequests(anki)).toEqual([]);
+    expect(anki.media).toEqual(['pandazap_untagged.png']);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(notices).toContain('No orphaned Panda Zap media to delete');
+  });
+
+  it('aborts without deleting when a verification query fails', async () => {
+    anki.media = ['pandazap_old.png'];
+    anki.failFindNotes = (query) => query.includes('pandazap_old.png');
+    const plugin = createPlugin(createConnector());
+
+    await plugin.cleanUpOrphanedMedia();
+
+    expect(deleteRequests(anki)).toEqual([]);
+    expect(anki.media).toEqual(['pandazap_old.png']);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(notices).toContain('Could not verify Anki media: findNotes failed');
+  });
+
+  it('refuses to run while a sync dialog is open', async () => {
+    anki.media = ['pandazap_old.png'];
+    const plugin = createPlugin(createConnector());
+    (plugin as unknown as { activeSyncModal: unknown }).activeSyncModal = {};
+
+    await plugin.cleanUpOrphanedMedia();
+
+    expect(requestUrl).not.toHaveBeenCalled();
+    expect(deleteRequests(anki)).toEqual([]);
+    expect(notices).toContain('Close the sync dialog before cleaning up media');
   });
 });

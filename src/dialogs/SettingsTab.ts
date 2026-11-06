@@ -8,6 +8,7 @@ import {
   markerLabels,
   parseAnkiConnectUrl,
   parsePort,
+  restoreDefaultSettings,
   validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
@@ -117,10 +118,7 @@ export class PandaZapSettingTab extends PluginSettingTab {
             render: (setting) => {
               setting.addButton((button) =>
                 button.setButtonText('Restore defaults').onClick(() => {
-                  // The migration queue is internal state, so a reset must not
-                  // drop renames that still need applying to Anki.
-                  const { pendingTagMigrations } = this.plugin.settings;
-                  Object.assign(this.plugin.settings, DEFAULT_SETTINGS, { pendingTagMigrations });
+                  Object.assign(this.plugin.settings, restoreDefaultSettings(this.plugin.settings));
                   void this.plugin
                     .saveSettings()
                     .then(() => {

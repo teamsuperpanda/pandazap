@@ -16,6 +16,7 @@ import {
   SyncResult,
   SyncRunOptions,
   AnkiConnectionState,
+  PendingTagMigration,
   describeConnection,
 } from './sync/types';
 import { extractQACardsFromText } from './sync/extractionUtils';
@@ -211,14 +212,16 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   /**
-   * Retags the Anki notes of renamed files that are still queued. Returns the
-   * path of the first note whose migration failed, so the caller can stop before
-   * a sync creates duplicates; the queue keeps that entry for the next retry.
+   * Retags the Anki notes of renamed files that are still queued. Entries are
+   * processed independently, so one poisoned rename cannot hold up the rest;
+   * a chained rename whose source tag was never written is kept for a later
+   * run. Returns the migrations that are still pending, so a caller can block
+   * the syncs that would duplicate them.
    */
-  flushPendingTagMigrations(): Promise<string | null> {
+  flushPendingTagMigrations(): Promise<PendingTagMigration[]> {
     // Renames and sync entry points can ask at the same time, so runs are
     // serialised and each one sees the queue the previous run left behind.
-    const flush: Promise<string | null> = this.tagMigrationQueue.then(() =>
+    const flush: Promise<PendingTagMigration[]> = this.tagMigrationQueue.then(() =>
       this.runPendingTagMigrations()
     );
     this.tagMigrationQueue = flush.then(
@@ -228,12 +231,24 @@ export default class PandaZapPlugin extends Plugin {
     return flush;
   }
 
-  private async runPendingTagMigrations(): Promise<string | null> {
+  private async runPendingTagMigrations(): Promise<PendingTagMigration[]> {
     const pending = [...this.settings.pendingTagMigrations];
-    if (pending.length === 0) return null;
+    const failed: PendingTagMigration[] = [];
+    if (pending.length === 0) return failed;
     this.ankiConnector.updateSettings(this.settings);
 
+    // Paths whose final source tag is not known yet: a failed rename A -> B
+    // leaves B unset, so a queued B -> C must wait or it would migrate nothing
+    // and drop its entry.
+    const unsettled = new Set<string>();
+
     for (const migration of pending) {
+      if (unsettled.has(migration.fromPath)) {
+        failed.push(migration);
+        unsettled.add(migration.toPath);
+        continue;
+      }
+
       let content: string | undefined;
       const file = this.app.vault.getAbstractFileByPath(migration.toPath);
       if (file instanceof TFile) {
@@ -247,10 +262,12 @@ export default class PandaZapPlugin extends Plugin {
       try {
         await this.ankiConnector.migrateSourceTag(migration.fromPath, migration.toPath, content);
       } catch (error: unknown) {
-        // The old tag is still on the notes, so syncing now would duplicate
-        // them. Keep the entry and stop the run.
+        // The old tag is still on the notes, so syncing them now would duplicate
+        // them. Keep the entry and try the unrelated entries after it.
         console.warn('PandaZap: source tag migration failed', migration.toPath, error);
-        return migration.toPath;
+        failed.push(migration);
+        unsettled.add(migration.toPath);
+        continue;
       }
 
       this.settings.pendingTagMigrations = this.settings.pendingTagMigrations.filter(
@@ -264,7 +281,7 @@ export default class PandaZapPlugin extends Plugin {
         console.warn('PandaZap: could not persist tag migration queue', error);
       }
     }
-    return null;
+    return failed;
   }
 
   /**
@@ -289,20 +306,35 @@ export default class PandaZapPlugin extends Plugin {
     await this.flushPendingTagMigrations();
   }
 
-  /** Applies pending renames, blocking a sync that would duplicate their notes. */
-  private async ensureTagMigrationsApplied(): Promise<void> {
-    const failedPath = await this.flushPendingTagMigrations();
-    if (!failedPath) return;
-    const message = describeTagMigrationFailure(failedPath);
+  /**
+   * Applies pending renames and blocks the sync only when one of its own notes
+   * still needs migrating; unrelated notes keep syncing while a broken entry
+   * waits for Anki to be reachable again.
+   */
+  private async ensureTagMigrationsApplied(
+    targetPaths: readonly (string | undefined)[]
+  ): Promise<void> {
+    const failed = await this.flushPendingTagMigrations();
+    const targets = new Set(targetPaths.filter((path): path is string => Boolean(path)));
+    const blocking = failed.find((migration) => targets.has(migration.toPath));
+    if (!blocking) return;
+
+    const message = describeTagMigrationFailure(blocking.toPath);
     new Notice(message);
     throw new Error(message);
   }
 
   /**
-   * Deletes media the plugin uploaded that no plugin-tagged note references any
-   * more. Both listings must succeed before anything is deleted.
+   * Deletes media the plugin uploaded that no Anki note references any more.
+   * Both listings must succeed before anything is deleted, and every candidate
+   * is verified against all notes, so media still used by an untagged note
+   * survives.
    */
   async cleanUpOrphanedMedia(): Promise<void> {
+    if (this.activeSyncModal) {
+      new Notice('Close the sync dialog before cleaning up media');
+      return;
+    }
     this.ankiConnector.updateSettings(this.settings);
 
     let mediaFiles: string[];
@@ -316,7 +348,18 @@ export default class PandaZapPlugin extends Plugin {
       return;
     }
 
-    const orphans = mediaFiles.filter((name) => !referenced.has(name));
+    const candidates = mediaFiles.filter((name) => !referenced.has(name));
+    let orphans: string[];
+    try {
+      // Tagged notes are only one source of references: an untagged note (or a
+      // duplicate) can still embed the file.
+      orphans = await this.ankiConnector.filterUnreferencedMedia(candidates);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Could not verify Anki media: ${message}`);
+      return;
+    }
+
     if (orphans.length === 0) {
       new Notice('No orphaned Panda Zap media to delete');
       return;
@@ -371,7 +414,7 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   async analyzeBatchSyncOperation(bContext: BatchSyncContext): Promise<SyncAnalysis> {
-    await this.ensureTagMigrationsApplied();
+    await this.ensureTagMigrationsApplied(bContext.notePaths);
     this.ankiConnector.updateSettings(this.settings);
     const connection = await this.ankiConnector.testConnection();
     if (connection.status !== 'ok') {
@@ -417,7 +460,7 @@ export default class PandaZapPlugin extends Plugin {
     confirmedDeletionIdsByNote?: ReadonlyMap<string, readonly string[]>,
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
-    await this.ensureTagMigrationsApplied();
+    await this.ensureTagMigrationsApplied(bContext.notePaths);
     this.ankiConnector.updateSettings(this.settings);
     const result: SyncResult = { cards: [] };
     const totalCards = bContext.totalCards;
@@ -488,10 +531,10 @@ export default class PandaZapPlugin extends Plugin {
   }
 
   async analyzeSyncOperation(context?: SyncContext): Promise<SyncAnalysis> {
-    await this.ensureTagMigrationsApplied();
+    const syncContext = context ?? this.captureSyncContext();
+    await this.ensureTagMigrationsApplied([syncContext.notePath]);
     this.ankiConnector.updateSettings(this.settings);
 
-    const syncContext = context ?? this.captureSyncContext();
     return this.ankiConnector.analyzeSyncOperation(
       syncContext.cards,
       syncContext.notePath,
@@ -510,9 +553,9 @@ export default class PandaZapPlugin extends Plugin {
     confirmedDeletionIds?: readonly string[],
     runOptions?: SyncRunOptions
   ): Promise<SyncResult> {
-    await this.ensureTagMigrationsApplied();
-    this.ankiConnector.updateSettings(this.settings);
     const syncContext = context ?? this.captureSyncContext();
+    await this.ensureTagMigrationsApplied([syncContext.notePath]);
+    this.ankiConnector.updateSettings(this.settings);
     try {
       return await this.ankiConnector.syncCards(
         syncContext.cards,

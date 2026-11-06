@@ -166,9 +166,9 @@ export class AnkiConnector {
       const findNotes = async (query: string): Promise<string[]> => {
         const existingNoteIds = (await this.ankiConnectRequest('findNotes', {
           query,
-        })) as string[];
+        })) as Array<string | number>;
         if (!Array.isArray(existingNoteIds)) throw new Error('Anki returned invalid note IDs');
-        return existingNoteIds;
+        return existingNoteIds.map(String);
       };
 
       const sourceTags =
@@ -201,7 +201,7 @@ export class AnkiConnector {
             const back = ni.fields?.Back?.value?.trim() ?? '';
             if (front && !extractedQuestions.has(normalizeField(front))) {
               const delCard = { question: front, answer: back, line: -1 };
-              const noteId = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
+              const noteId = ankiNoteId(ni);
               analysis.cardsToDelete.push({
                 card: delCard,
                 action: CardAction.DELETE,
@@ -475,49 +475,66 @@ export class AnkiConnector {
    * Moves the notes saved under one vault path onto the source tag of another,
    * so a renamed or moved note keeps the Anki notes it already has. Each note is
    * retagged in place with its other tags intact, and moved to the deck the new
-   * path or its `Deck::` override targets when that differs from its current
-   * deck. Returns how many notes carried the old tag.
+   * path or its `Deck::` override targets when that differs from the deck the
+   * old path or override targeted. Returns how many notes carried an old tag.
    */
   async migrateSourceTag(fromPath: string, toPath: string, toContent?: string): Promise<number> {
-    const fromTag = this.getSourceTag(fromPath);
     const toTag = this.getSourceTag(toPath);
-    if (fromTag === toTag) return 0;
+    // Older versions only wrote the truncated legacy tag, so both are searched.
+    // The legacy tag is only usable when it unambiguously names one path, which
+    // is the same rule a normal sync applies.
+    const oldTags = this.getEligibleSourceTags(fromPath, this.getDeckName(fromPath));
+    if (oldTags.length === 1 && oldTags[0] === toTag) return 0;
 
-    const noteIds = (await this.ankiConnectRequest('findNotes', {
-      query: `tag:${PLUGIN_TAG} tag:${fromTag}`,
-    })) as string[];
-    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
-    // No note carries the old tag, so there is nothing to migrate and the queue
+    const noteIds = new Set<string>();
+    for (const oldTag of oldTags) {
+      const found = (await this.ankiConnectRequest('findNotes', {
+        query: `tag:${PLUGIN_TAG} tag:${oldTag}`,
+      })) as Array<string | number>;
+      if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
+      for (const id of found) noteIds.add(String(id));
+    }
+    // No note carries an old tag, so there is nothing to migrate and the queue
     // entry is finished.
-    if (noteIds.length === 0) return 0;
+    if (noteIds.size === 0) return 0;
 
     const notesInfo = (await this.ankiConnectRequest('notesInfo', {
-      notes: noteIds,
+      notes: [...noteIds],
     })) as AnkiNoteInfo[];
     if (!Array.isArray(notesInfo)) throw new Error('Anki returned invalid note information');
 
-    const targetDeck = this.getDeckName(toPath, toContent);
+    // The old note's own content cannot be read once it has been renamed, so the
+    // old deck is derived from the old path alone. A deck override is therefore
+    // only seen in the new deck; the old override deck was already the target
+    // for every note a sync wrote, so nothing there needs moving.
+    const oldDeck = this.getDeckName(fromPath);
+    const newDeck = this.getDeckName(toPath, toContent);
+    const defaultDeckMode = !this.settings.useNoteBased && !this.getDeckOverride(toContent);
+    const moveDeck = !defaultDeckMode && oldDeck !== newDeck;
     const cardsByNote = await this.fetchCardsByNote(notesInfo);
 
     for (const note of notesInfo) {
-      const noteId = note.noteId ?? note.noteIds?.[0] ?? note.id ?? '';
+      const noteId = ankiNoteId(note);
       if (!noteId) continue;
 
       // The deck moves first. If the tag update then fails, the note still
       // carries the old tag, so the retry finds it again; the other order would
-      // retag it and lose the pending deck move.
-      const cards = cardsByNote.get(noteId) ?? [];
-      const decks = cards
-        .map((card) => card.deckName)
-        .filter((deck): deck is string => Boolean(deck));
-      if (decks.length > 0 && decks.some((deck) => deck !== targetDeck)) {
-        await this.ankiConnectRequest('changeDeck', {
-          cards: cards.map((card) => card.cardId),
-          deck: targetDeck,
-        });
+      // retag it and lose the pending deck move. Only cards still in the deck the
+      // old path targeted are moved, so a card the user moved by hand stays put.
+      if (moveDeck) {
+        const cards = cardsByNote.get(noteId) ?? [];
+        const cardsToMove = cards
+          .filter((card) => card.deckName === oldDeck)
+          .map((card) => card.cardId);
+        if (cardsToMove.length > 0) {
+          await this.ankiConnectRequest('changeDeck', {
+            cards: cardsToMove,
+            deck: newDeck,
+          });
+        }
       }
 
-      const tags = (note.tags ?? []).filter((tag) => tag !== fromTag);
+      const tags = (note.tags ?? []).filter((tag) => !oldTags.includes(tag));
       if (!tags.includes(toTag)) tags.push(toTag);
       await this.ankiConnectRequest('updateNoteTags', {
         note: parseInt(noteId, 10),
@@ -537,7 +554,7 @@ export class AnkiConnector {
     const byNote = new Map<string, AnkiCardInfo[]>();
     const cardIds = new Set<number>();
     for (const note of notes) {
-      const noteId = note.noteId ?? note.noteIds?.[0] ?? note.id ?? '';
+      const noteId = ankiNoteId(note);
       if (!noteId) continue;
       byNote.set(noteId, []);
       for (const cardId of note.cards ?? []) {
@@ -551,6 +568,7 @@ export class AnkiConnector {
     })) as AnkiCardInfo[];
     if (!Array.isArray(cardsInfo)) throw new Error('Anki returned invalid card information');
     for (const card of cardsInfo) {
+      // cardsInfo reports the owning note as a number, so compare as strings.
       if (typeof card?.note !== 'number') continue;
       const entries = byNote.get(String(card.note));
       if (entries) entries.push(card);
@@ -591,6 +609,25 @@ export class AnkiConnector {
     return referenced;
   }
 
+  /**
+   * Narrows deletion candidates to the files no Anki note references at all.
+   * The tagged-note scan cannot see untagged or duplicated notes, so every
+   * candidate is checked with a full-text search for its filename. Orphan
+   * counts are normally small, but this is one request per candidate; a failure
+   * aborts the whole check so nothing is deleted on partial information.
+   */
+  async filterUnreferencedMedia(filenames: readonly string[]): Promise<string[]> {
+    const unreferenced: string[] = [];
+    for (const filename of filenames) {
+      const found = (await this.ankiConnectRequest('findNotes', {
+        query: `"${filename.replace(/"/g, '')}"`,
+      })) as Array<string | number>;
+      if (!Array.isArray(found)) throw new Error('Anki returned invalid note IDs');
+      if (found.length === 0) unreferenced.push(filename);
+    }
+    return unreferenced;
+  }
+
   /** Deletes the named files from Anki's media folder, returning how many went. */
   async removeMediaFiles(filenames: readonly string[]): Promise<number> {
     let deleted = 0;
@@ -627,10 +664,13 @@ export class AnkiConnector {
     if (this.noteCache && this.noteCache.deckName === deckName) return;
     const noteCache = { deckName, byFront: new Map<string, NoteCacheEntry[]>() };
     const query = `deck:"${deckName}" tag:${PLUGIN_TAG}`;
-    const noteIds = (await this.ankiConnectRequest('findNotes', { query })) as string[];
-    if (!Array.isArray(noteIds)) throw new Error('Anki returned invalid note IDs');
+    const foundIds = (await this.ankiConnectRequest('findNotes', { query })) as Array<
+      string | number
+    >;
+    if (!Array.isArray(foundIds)) throw new Error('Anki returned invalid note IDs');
+    const noteIds = foundIds.map(String);
 
-    if (!noteIds || noteIds.length === 0) {
+    if (noteIds.length === 0) {
       this.noteCache = noteCache;
       return;
     }
@@ -645,7 +685,7 @@ export class AnkiConnector {
         const frontValue = ni.fields?.Front?.value ?? '';
         const front = frontValue.trim();
         const key = normalizeField(front);
-        const id = ni.noteId ?? ni.noteIds?.[0] ?? ni.id ?? '';
+        const id = ankiNoteId(ni);
         if (!id) continue;
         const entry: NoteCacheEntry = { noteId: id, fields: ni.fields, raw: ni };
         const existing = noteCache.byFront.get(key);
@@ -802,6 +842,11 @@ export class AnkiConnector {
       }
     }
   }
+}
+
+/** Anki Connect uses numeric note IDs in responses; compare them as strings. */
+function ankiNoteId(note: AnkiNoteInfo): string {
+  return String(note.noteId ?? note.noteIds?.[0] ?? note.id ?? '');
 }
 
 function isNetworkError(error: unknown): boolean {

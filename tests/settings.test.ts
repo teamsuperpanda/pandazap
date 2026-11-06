@@ -6,6 +6,7 @@ import {
   normalizeSettings,
   parseAnkiConnectUrl,
   parsePort,
+  restoreDefaultSettings,
   validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
@@ -75,6 +76,18 @@ describe('normalizeSettings', () => {
     for (const value of [undefined, null, 'old.md', 3, {}]) {
       expect(normalizeSettings({ pendingTagMigrations: value }).pendingTagMigrations).toEqual([]);
     }
+  });
+
+  it('restores user defaults but keeps the pending migration queue', () => {
+    const queue = [{ fromPath: 'old/a.md', toPath: 'new/a.md' }];
+
+    expect(
+      restoreDefaultSettings({
+        ...DEFAULT_SETTINGS,
+        defaultDeck: 'Custom',
+        pendingTagMigrations: queue,
+      })
+    ).toEqual({ ...DEFAULT_SETTINGS, pendingTagMigrations: queue });
   });
 
   it('accepts a port stored as a numeric string', () => {

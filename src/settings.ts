@@ -137,6 +137,14 @@ export function normalizeSettings(raw: unknown): PandaZapSettings {
   };
 }
 
+/**
+ * User settings reset to their defaults. Pending rename migrations are internal
+ * state, so a reset must not drop renames that have not reached Anki yet.
+ */
+export function restoreDefaultSettings(settings: PandaZapSettings): PandaZapSettings {
+  return { ...DEFAULT_SETTINGS, pendingTagMigrations: settings.pendingTagMigrations };
+}
+
 /** The marker words every matcher and label must use, with defaults applied. */
 export function markerLabels(settings: PandaZapSettings): MarkerLabels {
   return {

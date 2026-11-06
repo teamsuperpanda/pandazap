@@ -26,6 +26,8 @@ export interface FakeAnkiState {
   media: string[];
   /** Actions that throw, simulating Anki being unreachable or a failed call. */
   failActions: Set<string>;
+  /** Fails findNotes whose query matches, to poison a single migration. */
+  failFindNotes?: (query: string) => boolean;
   requests: Array<{ action: string; params?: Record<string, unknown> }>;
 }
 
@@ -35,6 +37,17 @@ interface RequestUrlMock {
 
 function ok(result: unknown) {
   return { status: 200, json: { result, error: null } };
+}
+
+/** Every field value of a note, for Anki's quoted full-text search. */
+function noteText(note: FakeNote): string {
+  const fields = note.fields ?? {
+    Front: { value: note.front },
+    Back: { value: note.back },
+  };
+  return Object.values(fields)
+    .map((field) => field.value)
+    .join('\n');
 }
 
 export function installFakeAnki(
@@ -62,16 +75,19 @@ export function installFakeAnki(
         return ok(6);
       case 'findNotes': {
         const query = String(request.params?.query ?? '');
-        // Only tag filters matter here; deck filters are ignored, exactly like a
-        // superset of the real result.
+        if (state.failFindNotes?.(query)) throw new Error('findNotes failed');
+        // Only tag and quoted text filters matter here; deck filters are
+        // ignored, exactly like a superset of the real result.
         const tags = query
           .split(/\s+/)
           .filter((token) => token.startsWith('tag:'))
           .map((token) => token.slice(4));
+        const quoted = (query.match(/"[^"]*"/g) ?? []).map((token) => token.slice(1, -1));
         return ok(
           state.notes
             .filter((note) => tags.every((tag) => note.tags.includes(tag)))
-            .map((note) => note.noteId)
+            .filter((note) => quoted.every((text) => noteText(note).includes(text)))
+            .map((note) => Number(note.noteId))
         );
       }
       case 'notesInfo': {
@@ -80,7 +96,8 @@ export function installFakeAnki(
           state.notes
             .filter((note) => ids.includes(note.noteId))
             .map((note) => ({
-              noteId: note.noteId,
+              // Real Anki Connect returns note IDs as numbers.
+              noteId: Number(note.noteId),
               fields: note.fields ?? {
                 Front: { value: note.front },
                 Back: { value: note.back },
