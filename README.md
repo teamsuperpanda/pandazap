@@ -21,6 +21,8 @@ Turn Obsidian notes into Anki flashcards. Panda Zap extracts Q/A pairs from Mark
 | **Preview before sync** | See exactly what will be added, updated, or removed. |
 | **Deck targeting** | Per-note override > folder-based naming > global default. Multiple files can share a deck, cards merge safely. |
 | **Batch sync** | Select multiple notes in the file explorer and sync them all at once via the command palette. |
+| **One-step sync** | Run "Sync current note to Anki" from the command palette, or right-click one or more Markdown files and choose "Sync note(s) to Anki". Deletions are still confirmed first. |
+| **Sync on save** | Optionally sync notes that already exist in Anki shortly after you save them, with no dialog. |
 | **Connection test** | Quick status check in the sync dialog. |
 | **Documentation** | Full docs at [teamsuperpanda.com/pandazap](https://teamsuperpanda.com/pandazap) |
 

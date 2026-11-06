@@ -33,6 +33,19 @@ vi.mock('obsidian', () => ({
     registerEvent(eventRef: unknown): void {
       registerEvent(eventRef);
     }
+    addStatusBarItem() {
+      return {
+        setText() {
+          return undefined;
+        },
+        setAttribute() {
+          return undefined;
+        },
+        addClass() {
+          return undefined;
+        },
+      };
+    }
   },
   MarkdownView: class {},
   TFile: class {
@@ -300,8 +313,8 @@ describe('note rename migration', () => {
     await loadPlugin(harness);
 
     expect(harness.renameHandlers).toHaveLength(1);
-    // rename, file-menu and sync-on-save listeners.
-    expect(registerEvent).toHaveBeenCalledTimes(3);
+    // rename, file-menu, sync-on-save and delete listeners.
+    expect(registerEvent).toHaveBeenCalledTimes(4);
     await harness.renameHandlers[0](newFile('renamed.txt'), 'notes.txt');
 
     expect(notices).toEqual([]);

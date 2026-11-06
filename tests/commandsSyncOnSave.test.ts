@@ -10,36 +10,47 @@ interface StatusBarState {
   text: string;
   attributes: Record<string, string>;
   classes: Set<string>;
+  created: number;
 }
 
-const { requestUrl, notices, openSyncModal, commands, statusBarState, statusItem } = vi.hoisted(
-  () => {
-    const statusBarState = {
-      text: '',
-      attributes: {} as Record<string, string>,
-      classes: new Set<string>(),
-    };
-    const statusItem = {
-      setText(value: string) {
-        statusBarState.text = value;
-      },
-      setAttribute(name: string, value: string) {
-        statusBarState.attributes[name] = value;
-      },
-      addClass(name: string) {
-        statusBarState.classes.add(name);
-      },
-    };
-    return {
-      requestUrl: vi.fn(),
-      notices: [] as string[],
-      openSyncModal: vi.fn(),
-      commands: [] as CommandLike[],
-      statusBarState,
-      statusItem,
-    };
-  }
-);
+const {
+  requestUrl,
+  notices,
+  openSyncModal,
+  commands,
+  statusBarState,
+  statusItem,
+  confirmResult,
+  confirmOptions,
+} = vi.hoisted(() => {
+  const statusBarState = {
+    text: '',
+    attributes: {} as Record<string, string>,
+    classes: new Set<string>(),
+    created: 0,
+  };
+  const statusItem = {
+    setText(value: string) {
+      statusBarState.text = value;
+    },
+    setAttribute(name: string, value: string) {
+      statusBarState.attributes[name] = value;
+    },
+    addClass(name: string) {
+      statusBarState.classes.add(name);
+    },
+  };
+  return {
+    requestUrl: vi.fn(),
+    notices: [] as string[],
+    openSyncModal: vi.fn(),
+    commands: [] as CommandLike[],
+    statusBarState,
+    statusItem,
+    confirmResult: { value: true },
+    confirmOptions: [] as Array<{ title: string; message: string; items?: readonly string[] }>,
+  };
+});
 
 vi.mock('obsidian', () => ({
   Plugin: class {
@@ -65,6 +76,7 @@ vi.mock('obsidian', () => ({
       return undefined;
     }
     addStatusBarItem() {
+      statusBarState.created += 1;
       return statusItem;
     }
   },
@@ -87,13 +99,22 @@ vi.mock('../src/dialogs/SyncModal', () => ({
   },
 }));
 vi.mock('../src/dialogs/SettingsTab', () => ({ PandaZapSettingTab: class {} }));
-vi.mock('../src/dialogs/ConfirmModal', () => ({ ConfirmModal: class {} }));
+vi.mock('../src/dialogs/ConfirmModal', () => ({
+  ConfirmModal: class {
+    constructor(_app: unknown, options: { title: string; message: string; items?: string[] }) {
+      confirmOptions.push(options);
+    }
+    async confirm(): Promise<boolean> {
+      return confirmResult.value;
+    }
+  },
+}));
 
 import PandaZapPlugin from '../src/main';
 import { MarkdownView, TFile } from 'obsidian';
 import type { Menu, TAbstractFile } from 'obsidian';
 import { AnkiConnector } from '../src/sync/AnkiConnector';
-import { DEFAULT_SETTINGS, type PandaZapSettings } from '../src/sync/types';
+import { DEFAULT_SETTINGS, createSyncContext, type PandaZapSettings } from '../src/sync/types';
 import { SYNC_ON_SAVE_DEBOUNCE_MS } from '../src/constants';
 import { installFakeAnki, type FakeAnkiState } from './fakeAnki';
 
@@ -212,6 +233,14 @@ function useSettings(plugin: PandaZapPlugin, overrides: Partial<PandaZapSettings
   plugin.settings = { ...DEFAULT_SETTINGS, ...overrides };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function createMenu(): { entries: MenuEntry[]; menu: Menu } {
   const entries: MenuEntry[] = [];
   const menu = {
@@ -245,6 +274,9 @@ beforeEach(() => {
   statusBarState.text = '';
   statusBarState.attributes = {};
   statusBarState.classes.clear();
+  statusBarState.created = 0;
+  confirmOptions.length = 0;
+  confirmResult.value = true;
   (globalThis as unknown as { activeDocument: unknown }).activeDocument = {
     querySelectorAll: () => [],
   };
@@ -255,6 +287,13 @@ afterEach(() => {
 });
 
 describe('sync current note command', () => {
+  it('creates the status item during onload', async () => {
+    await createHarness();
+
+    expect(statusBarState.created).toBe(1);
+    expect(statusBarState.classes.has('panda-zap-sync-status')).toBe(true);
+  });
+
   it('is visible only for a Markdown file', async () => {
     const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
     const command = commands.find((entry) => entry.id === 'sync-current-note');
@@ -266,6 +305,18 @@ describe('sync current note command', () => {
     expect(command?.checkCallback?.(true)).toBe(true);
     harness.setActiveView({ not: 'a markdown view' });
     expect(command?.checkCallback?.(true)).toBe(false);
+  });
+
+  it('runs the sync when checkCallback is invoked for execution', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const command = commands.find((entry) => entry.id === 'sync-current-note');
+    const sync = vi.spyOn(harness.plugin, 'syncCurrentNote').mockResolvedValue();
+
+    expect(command?.checkCallback?.(false)).toBe(false);
+    harness.setActiveView(newMarkdownView());
+    expect(command?.checkCallback?.(false)).toBe(true);
+
+    expect(sync).toHaveBeenCalledTimes(1);
   });
 
   it('syncs the active note from the editor buffer without opening the dialog', async () => {
@@ -293,14 +344,14 @@ describe('sync current note command', () => {
       'note.md',
       'Q: Buffered\nA: Value',
       false,
-      [],
-      false,
-      undefined
+      undefined,
+      true,
+      expect.objectContaining({ abort: expect.objectContaining({ cancelled: false }) })
     );
     expect(notices[notices.length - 1]).toBe('Sync completed: 1 succeeded, 0 skipped');
   });
 
-  it('uses the dialog confirmation path when the note has deletions', async () => {
+  it('asks once before deleting notes found by the analysis', async () => {
     const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
     const connector = stubConnector({
       analyzeSyncOperation: vi.fn().mockResolvedValue({
@@ -322,39 +373,156 @@ describe('sync current note command', () => {
 
     await harness.plugin.syncCurrentNote();
 
-    expect(openSyncModal).toHaveBeenCalledTimes(1);
-    expect(connector.syncCards).not.toHaveBeenCalled();
+    expect(openSyncModal).not.toHaveBeenCalled();
+    expect(confirmOptions).toHaveLength(1);
+    expect(confirmOptions[0].message).toContain('delete 1 cards');
+    expect(connector.syncCards).toHaveBeenCalledWith(
+      [{ question: 'Q', answer: 'A', line: 1 }],
+      false,
+      'note.md',
+      'Q: Q\nA: A',
+      true,
+      ['1'],
+      true,
+      expect.objectContaining({ abort: expect.objectContaining({ cancelled: false }) })
+    );
+  });
+
+  it('does not start a second run while one is already in flight', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    let release!: (analysis: unknown) => void;
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          })
+      ),
+    });
+    useConnector(harness.plugin, connector);
+    harness.setActiveView(markdownView('note.md', 'Q: Q\nA: A'));
+
+    const first = harness.plugin.syncCurrentNote();
+    await vi.waitFor(() => expect(connector.analyzeSyncOperation).toHaveBeenCalledTimes(1));
+    await harness.plugin.syncCurrentNote();
+
+    expect(notices).toContain('A sync for one of these notes is already running');
+    expect(connector.analyzeSyncOperation).toHaveBeenCalledTimes(1);
+
+    release({ cardsToAdd: [], cardsToUpdate: [], cardsToDelete: [], totalCards: 1 });
+    await first;
+  });
+
+  it('bails when a silent run for the note is already in flight', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [],
+        totalCards: 1,
+      }),
+    });
+    useConnector(harness.plugin, connector);
+    harness.setActiveView(markdownView('note.md', 'Q: Q\nA: A'));
+    (harness.plugin as unknown as { syncInFlight: Set<string> }).syncInFlight.add('note.md');
+
+    await harness.plugin.syncCurrentNote();
+
+    expect(notices).toContain('A sync for one of these notes is already running');
+    expect(connector.analyzeSyncOperation).not.toHaveBeenCalled();
   });
 });
 
 describe('file menu sync entry', () => {
   it('adds one entry for the clicked Markdown file', async () => {
     const harness = await createHarness({ 'one.md': '', 'two.md': '' });
-    const open = vi.spyOn(harness.plugin, 'openBatchSyncDialog').mockResolvedValue();
     const { entries, menu } = createMenu();
 
     harness.workspaceHandlers.get('file-menu')?.(menu, harness.file('one.md'));
 
     expect(entries).toHaveLength(1);
     expect(entries[0].title).toBe('Sync note to Anki');
+  });
+
+  it('syncs one file directly without opening the dialog', async () => {
+    const harness = await createHarness({ 'one.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [],
+        totalCards: 1,
+      }),
+    });
+    useConnector(harness.plugin, connector);
+    const { entries, menu } = createMenu();
+
+    harness.workspaceHandlers.get('file-menu')?.(menu, harness.file('one.md'));
     entries[0].onClick?.();
-    await Promise.resolve();
-    expect(open).toHaveBeenCalledWith(['one.md']);
+
+    await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(1));
+    expect(connector.syncCards.mock.calls[0][2]).toBe('one.md');
+    expect(openSyncModal).not.toHaveBeenCalled();
+    expect(confirmOptions).toHaveLength(0);
   });
 
   it('syncs all selected Markdown files with a counted label', async () => {
-    const harness = await createHarness({ 'one.md': '', 'two.md': '' });
-    const open = vi.spyOn(harness.plugin, 'openBatchSyncDialog').mockResolvedValue();
+    const harness = await createHarness({ 'one.md': 'Q: Q\nA: A', 'two.md': 'Q: Q2\nA: A2' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn().mockResolvedValue({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [],
+        totalCards: 1,
+      }),
+    });
+    useConnector(harness.plugin, connector);
     harness.selectFiles(harness.file('one.md'), harness.file('two.md'));
     const { entries, menu } = createMenu();
 
     harness.workspaceHandlers.get('file-menu')?.(menu, harness.file('two.md'));
-
-    expect(entries).toHaveLength(1);
     expect(entries[0].title).toBe('Sync 2 notes to Anki');
     entries[0].onClick?.();
-    await Promise.resolve();
-    expect(open).toHaveBeenCalledWith(['one.md', 'two.md']);
+
+    await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(2));
+    expect(connector.syncCards.mock.calls.map((call) => call[2])).toEqual(['one.md', 'two.md']);
+    expect(openSyncModal).not.toHaveBeenCalled();
+  });
+
+  it('confirms aggregated deletions once before a multi-note sync', async () => {
+    const harness = await createHarness({ 'one.md': 'Q: Q\nA: A', 'two.md': 'Q: Q2\nA: A2' });
+    const connector = stubConnector({
+      analyzeSyncOperation: vi.fn(async (_cards: unknown, notePath: string) => ({
+        cardsToAdd: [],
+        cardsToUpdate: [],
+        cardsToDelete: [
+          {
+            card: { question: 'Old', answer: '', line: -1 },
+            action: 'delete',
+            deckName: 'x',
+            existingCardId: notePath === 'one.md' ? '11' : '22',
+          },
+        ],
+        totalCards: 1,
+      })),
+    });
+    useConnector(harness.plugin, connector);
+    harness.selectFiles(harness.file('one.md'), harness.file('two.md'));
+    const { entries, menu } = createMenu();
+
+    harness.workspaceHandlers.get('file-menu')?.(menu, harness.file('two.md'));
+    entries[0].onClick?.();
+
+    await vi.waitFor(() => expect(connector.syncCards).toHaveBeenCalledTimes(2));
+    expect(openSyncModal).not.toHaveBeenCalled();
+    expect(confirmOptions).toHaveLength(1);
+    expect(confirmOptions[0].message).toContain('2 cards from 2 notes');
+    expect(confirmOptions[0].items).toEqual(['one (1)', 'two (1)']);
+    expect(connector.syncCards.mock.calls[0][4]).toBe(true);
+    expect(connector.syncCards.mock.calls[0][5]).toEqual(['11']);
+    expect(connector.syncCards.mock.calls[1][4]).toBe(true);
+    expect(connector.syncCards.mock.calls[1][5]).toEqual(['22']);
   });
 
   it('does not add an entry for a non-Markdown file', async () => {
@@ -392,7 +560,7 @@ describe('sync on save', () => {
     harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
     await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
 
-    expect(connector.hasNotesForSourceTag).toHaveBeenCalledWith('note.md');
+    expect(connector.hasNotesForSourceTag).toHaveBeenCalledWith('note.md', 'Q: Q\nA: A');
     expect(connector.syncCards).not.toHaveBeenCalled();
     expect(statusBarState.text).toBe('');
     expect(notices).toHaveLength(0);
@@ -520,5 +688,157 @@ describe('sync on save', () => {
     await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
 
     expect(statusBarState.text).toBe('Panda Zap: sync failed - note');
+  });
+
+  it('pauses while media cleanup is active', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector();
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    (harness.plugin as unknown as { mediaCleanupActive: boolean }).mediaCleanupActive = true;
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+
+    expect(connector.hasNotesForSourceTag).not.toHaveBeenCalled();
+    expect(connector.syncCards).not.toHaveBeenCalled();
+    expect(statusBarState.text).toBe('Panda Zap: paused');
+  });
+
+  it('clears debounce timers on unload', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector();
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    harness.plugin.onunload();
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+
+    expect(connector.hasNotesForSourceTag).not.toHaveBeenCalled();
+    expect(
+      (harness.plugin as unknown as { silentSyncTimers: Map<string, number> }).silentSyncTimers.size
+    ).toBe(0);
+  });
+
+  it('stops a silent run that is waiting on the Anki probe when unloaded', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const probe = deferred<boolean>();
+    const connector = stubConnector({
+      hasNotesForSourceTag: vi.fn(() => probe.promise),
+    });
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connector.hasNotesForSourceTag).toHaveBeenCalled();
+
+    harness.plugin.onunload();
+    probe.resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connector.syncCards).not.toHaveBeenCalled();
+    expect(statusBarState.text).toBe('');
+  });
+
+  it('clears the error state when sync on save is turned off', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      hasNotesForSourceTag: vi.fn().mockResolvedValue(true),
+      syncCards: vi.fn().mockRejectedValue(new Error('Anki is down')),
+    });
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+    expect(statusBarState.text).toBe('Panda Zap: sync failed - note');
+
+    useSettings(harness.plugin, { syncOnSave: false });
+    await harness.plugin.saveSettings();
+
+    expect(statusBarState.text).toBe('');
+  });
+
+  it('clears the error state when the failing note is deleted', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector({
+      hasNotesForSourceTag: vi.fn().mockResolvedValue(true),
+      syncCards: vi.fn().mockRejectedValue(new Error('Anki is down')),
+    });
+    useConnector(harness.plugin, connector);
+    useSettings(harness.plugin, { syncOnSave: true });
+    vi.useFakeTimers();
+
+    harness.vaultHandlers.get('modify')?.(harness.file('note.md'));
+    await vi.advanceTimersByTimeAsync(SYNC_ON_SAVE_DEBOUNCE_MS);
+    expect(statusBarState.text).toBe('Panda Zap: sync failed - note');
+
+    harness.vaultHandlers.get('delete')?.(harness.file('note.md'));
+
+    expect(statusBarState.text).toBe('Panda Zap: idle');
+  });
+
+  it('refuses media cleanup while a sync is in flight', async () => {
+    const harness = await createHarness();
+    const mediaProbe = vi.fn();
+    const connector = stubConnector({
+      getPluginMediaFiles: mediaProbe,
+      getReferencedMediaFiles: vi.fn(),
+    });
+    useConnector(harness.plugin, connector);
+    (harness.plugin as unknown as { syncInFlight: Set<string> }).syncInFlight.add('note.md');
+
+    await harness.plugin.cleanUpOrphanedMedia();
+
+    expect(notices).toContain('Wait for the running sync to finish before cleaning up media');
+    expect(mediaProbe).not.toHaveBeenCalled();
+  });
+
+  it('invalidates the per-path card cache after a manual sync', async () => {
+    const harness = await createHarness({ 'note.md': 'Q: Q\nA: A' });
+    const connector = stubConnector();
+    useConnector(harness.plugin, connector);
+    const cache = (harness.plugin as unknown as { noteHasCardsCache: Map<string, boolean> })
+      .noteHasCardsCache;
+    cache.set('note.md', false);
+
+    await harness.plugin.syncCardsToAnki(
+      false,
+      false,
+      createSyncContext([{ question: 'Q', answer: 'A', line: 1 }], 'note.md', 'Q: Q\nA: A')
+    );
+
+    expect(cache.has('note.md')).toBe(false);
+  });
+
+  it('accepts notes carrying only the trusted legacy source tag', async () => {
+    const settings: PandaZapSettings = { ...DEFAULT_SETTINGS, useNoteBased: true };
+    const connector = new AnkiConnector(settings, {} as never);
+    const legacyTag = (
+      connector as unknown as { getLegacySourceTag(path: string): string }
+    ).getLegacySourceTag('note.md');
+    installFakeAnki(requestUrl, {
+      notes: [
+        {
+          noteId: '1',
+          front: 'Q',
+          back: 'A',
+          tags: ['panda-zap', legacyTag],
+          cards: [10],
+        },
+      ],
+      cards: [{ cardId: 10, note: 1, deckName: 'note' }],
+    });
+
+    await expect(connector.hasNotesForSourceTag('note.md', 'Q: Q\nA: A')).resolves.toBe(true);
   });
 });
