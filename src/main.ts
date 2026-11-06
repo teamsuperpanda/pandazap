@@ -228,29 +228,35 @@ export default class PandaZapPlugin extends Plugin {
     }
     const result: SyncResult = { cards: [] };
 
-    for (const [notePath, context] of bContext.contexts) {
-      const noteResult = await this.ankiConnector.syncCards(
-        context.cards,
-        preview,
-        notePath,
-        context.noteContent,
-        deleteConfirmed,
-        confirmedDeletionIdsByNote?.get(notePath),
-        true
-      );
-      result.cards.push(...noteResult.cards);
-      if (noteResult.deletion) {
-        const previous = result.deletion;
-        result.deletion = {
-          deletedCount: (previous?.deletedCount ?? 0) + noteResult.deletion.deletedCount,
-          failed: Boolean(previous?.failed) || noteResult.deletion.failed,
-          reason:
-            [previous?.reason, noteResult.deletion.reason].filter(Boolean).join('; ') || undefined,
-        };
+    try {
+      for (const [notePath, context] of bContext.contexts) {
+        const noteResult = await this.ankiConnector.syncCards(
+          context.cards,
+          preview,
+          notePath,
+          context.noteContent,
+          deleteConfirmed,
+          confirmedDeletionIdsByNote?.get(notePath),
+          true
+        );
+        result.cards.push(...noteResult.cards);
+        if (noteResult.deletion) {
+          const previous = result.deletion;
+          result.deletion = {
+            deletedCount: (previous?.deletedCount ?? 0) + noteResult.deletion.deletedCount,
+            failed: Boolean(previous?.failed) || noteResult.deletion.failed,
+            reason:
+              [previous?.reason, noteResult.deletion.reason].filter(Boolean).join('; ') ||
+              undefined,
+          };
+        }
       }
-    }
 
-    return result;
+      return result;
+    } finally {
+      // One refresh for the whole batch, even when a note throws.
+      this.ankiConnector.invalidateCache();
+    }
   }
 
   async analyzeSyncOperation(context?: SyncContext): Promise<SyncAnalysis> {
@@ -276,13 +282,18 @@ export default class PandaZapPlugin extends Plugin {
   ): Promise<SyncResult> {
     this.ankiConnector.updateSettings(this.settings);
     const syncContext = context ?? this.captureSyncContext();
-    return this.ankiConnector.syncCards(
-      syncContext.cards,
-      preview,
-      syncContext.notePath,
-      syncContext.noteContent,
-      deleteConfirmed,
-      confirmedDeletionIds
-    );
+    try {
+      return await this.ankiConnector.syncCards(
+        syncContext.cards,
+        preview,
+        syncContext.notePath,
+        syncContext.noteContent,
+        deleteConfirmed,
+        confirmedDeletionIds
+      );
+    } finally {
+      // A sync run writes notes, so re-read Anki on the next user action.
+      this.ankiConnector.invalidateCache();
+    }
   }
 }

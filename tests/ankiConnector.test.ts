@@ -10,9 +10,16 @@ vi.mock('obsidian', () => ({
 
 import { AnkiConnector } from '../src/sync/AnkiConnector';
 import { getStoredMediaFilename } from '../src/sync/imageUtils';
-import { DEFAULT_SETTINGS, formatSyncResult, type AnkiNoteInfo } from '../src/sync/types';
+import {
+  DEFAULT_SETTINGS,
+  describeConnection,
+  formatSyncResult,
+  type AnkiNoteInfo,
+} from '../src/sync/types';
+import { REQUEST_TIMEOUT_MS, RETRY_BACKOFF_BASE_MS } from '../src/constants';
 
 const settings = { ...DEFAULT_SETTINGS, useNoteBased: true };
+const deckSettings = { ...DEFAULT_SETTINGS, useNoteBased: false };
 const app = {} as ConstructorParameters<typeof AnkiConnector>[1];
 
 function response(result: unknown, error: string | null = null, status = 200) {
@@ -23,8 +30,24 @@ function actionOf(call: unknown[]): string {
   return parseRequest((call[0] as { body: string }).body).action;
 }
 
-function parseRequest(body: string): { action: string } {
-  return JSON.parse(body) as { action: string };
+function parseRequest(body: string): { action: string; params?: Record<string, unknown> } {
+  return JSON.parse(body) as { action: string; params?: Record<string, unknown> };
+}
+
+function requests(action: string) {
+  return requestUrl.mock.calls
+    .map((call) => parseRequest((call[0] as { body: string }).body))
+    .filter((request) => request.action === action);
+}
+
+function deckLookups(deckName: string) {
+  return requests('findNotes').filter(
+    (request) => request.params?.query === `deck:"${deckName}" tag:panda-zap`
+  );
+}
+
+function never() {
+  return new Promise<never>(() => {});
 }
 
 function note(noteId: string, front: string, back: string, tags: string[]): AnkiNoteInfo {
@@ -65,11 +88,38 @@ describe('AnkiConnector', () => {
   });
 
   it('reports an unreachable connection when the request fails at the network level', async () => {
-    vi.stubGlobal('window', { setTimeout: (callback: () => void) => callback() });
-    requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
-    expect(await new AnkiConnector(settings, app).testConnection()).toEqual({
-      status: 'unreachable',
-    });
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
+      const status = new AnkiConnector(settings, app).testConnection();
+
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MS * 8);
+
+      expect(await status).toEqual({ status: 'unreachable' });
+      expect(requestUrl).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports an unreachable connection when the version probe times out', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockImplementation(() => never());
+      const connector = new AnkiConnector(settings, app);
+      const status = connector.testConnection();
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS * 3 + RETRY_BACKOFF_BASE_MS * 4);
+
+      const connection = await status;
+      expect(connection).toEqual({
+        status: 'unreachable',
+        detail: 'Timed out after 5000 ms.',
+      });
+      expect(describeConnection(connection, 6)).toContain('Timed out after 5000 ms.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports an AnkiConnect version that is too old', async () => {
@@ -454,5 +504,213 @@ describe('AnkiConnector', () => {
     );
 
     expect(analysis.cardsToUpdate).toEqual([]);
+  });
+
+  it('reuses the analysis deck cache during sync', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
+      'mine.md'
+    );
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+    const result = await connector.syncCards(cards, false, 'mine.md');
+
+    expect(formatSyncResult(result)).toEqual(['Skipped (already up-to-date): Q -> Default']);
+    expect(deckLookups('Default')).toHaveLength(1);
+    expect(requests('notesInfo')).toHaveLength(1);
+  });
+
+  it('refreshes the cached deck when the connection port changes', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+    connector.updateSettings({ ...deckSettings, ankiConnectPort: 8766 });
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+
+    expect(deckLookups('Default')).toHaveLength(2);
+  });
+
+  it('refreshes the cached deck when deck settings change', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+    connector.updateSettings({ ...deckSettings, defaultDeck: 'Renamed' });
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+
+    expect(deckLookups('Default')).toHaveLength(1);
+    expect(deckLookups('Renamed')).toHaveLength(1);
+  });
+
+  it('keeps the cached deck when unrelated settings change', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+    connector.updateSettings({ ...deckSettings, questionWord: 'Question' });
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+
+    expect(deckLookups('Default')).toHaveLength(1);
+  });
+
+  it('refreshes the cached deck after an explicit invalidation', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+    connector.invalidateCache();
+    await connector.analyzeSyncOperation(cards, 'mine.md');
+
+    expect(deckLookups('Default')).toHaveLength(2);
+  });
+
+  it('re-queries Anki after the caller invalidates the cache following a sync run', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
+      'mine.md'
+    );
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.syncCards(cards, false, 'mine.md');
+    // main.ts clears the cache once after syncCardsToAnki returns.
+    connector.invalidateCache();
+    await connector.syncCards(cards, false, 'mine.md');
+
+    expect(deckLookups('Default')).toHaveLength(2);
+    expect(requests('notesInfo')).toHaveLength(2);
+  });
+
+  it('keeps one deck lookup across a shared-deck batch', async () => {
+    const connector = new AnkiConnector(deckSettings, app);
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') return response([]);
+      if (request.action === 'addNote') return response('1');
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const content = 'Deck:: Shared\nQ: Q\nA: A';
+    const cards = [{ question: 'Q', answer: 'A', line: 1 }];
+    await connector.syncCards(cards, false, 'one.md', content);
+    await connector.syncCards(cards, false, 'two.md', content);
+
+    expect(deckLookups('Shared')).toHaveLength(1);
+    expect(requests('addNote')).toHaveLength(2);
+  });
+
+  it('does not retry a non-idempotent request after a network error', async () => {
+    requestUrl.mockRejectedValue(new TypeError('Failed to fetch'));
+    const connector = new AnkiConnector(settings, app);
+    const request = (
+      connector as unknown as {
+        ankiConnectRequest(action: string): Promise<unknown>;
+      }
+    ).ankiConnectRequest('addNote');
+
+    await expect(request).rejects.toThrow('Failed to fetch');
+    expect(requestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a non-idempotent request once the timeout elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockImplementation(() => never());
+      const connector = new AnkiConnector(settings, app);
+      const request = (
+        connector as unknown as {
+          ankiConnectRequest(action: string): Promise<unknown>;
+        }
+      ).ankiConnectRequest('addNote');
+      const rejection = expect(request).rejects.toThrow(
+        /Anki Connect request "addNote" timed out after 5000 ms.*Anki is running/
+      );
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await rejection;
+      expect(requestUrl).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the request timeout timer after a successful response', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockResolvedValue(response(6));
+      const connector = new AnkiConnector(settings, app);
+      const result = await (
+        connector as unknown as {
+          ankiConnectRequest(action: string): Promise<unknown>;
+        }
+      ).ankiConnectRequest('version');
+
+      expect(result).toBe(6);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries an idempotent read after a timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrl.mockImplementationOnce(() => never()).mockResolvedValueOnce(response(['1']));
+      const connector = new AnkiConnector(settings, app);
+      const request = (
+        connector as unknown as {
+          ankiConnectRequest(action: string, params?: Record<string, unknown>): Promise<unknown>;
+        }
+      ).ankiConnectRequest('findNotes', { query: 'deck:"Default"' });
+
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MS * 2);
+
+      await expect(request).resolves.toEqual(['1']);
+      expect(requestUrl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

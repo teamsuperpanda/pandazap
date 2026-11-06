@@ -13,8 +13,14 @@ import {
   SyncResult,
   describeConnection,
 } from './types';
-import { ANKI_CONNECT_VERSION, PLUGIN_TAG, DEFAULT_TIMEOUT_MS } from '../constants';
+import {
+  ANKI_CONNECT_VERSION,
+  PLUGIN_TAG,
+  REQUEST_TIMEOUT_MS,
+  RETRY_BACKOFF_BASE_MS,
+} from '../constants';
 import { stableHash } from './hashUtils';
+import { withTimeout } from './requestTimeout';
 import {
   resolveImageSource,
   readImageFileToBase64,
@@ -30,15 +36,29 @@ export class AnkiConnector {
     deckName: string;
     byFront: Map<string, NoteCacheEntry[]>;
   } | null = null;
+  private cacheKey: string;
 
   constructor(settings: PandaZapSettings, app: App) {
     this.settings = settings;
     this.app = app;
+    this.cacheKey = cacheKeyFor(settings);
   }
 
-  /** Update settings and invalidate any cached data. Call when settings change. */
+  /**
+   * Update settings, keeping cached notes unless the connection or deck
+   * targeting changed. Callers that need a guaranteed fresh read use
+   * {@link invalidateCache}.
+   */
   updateSettings(newSettings: PandaZapSettings): void {
+    const nextCacheKey = cacheKeyFor(newSettings);
+    const cacheStillValid = nextCacheKey === this.cacheKey;
     this.settings = newSettings;
+    this.cacheKey = nextCacheKey;
+    if (!cacheStillValid) this.invalidateCache();
+  }
+
+  /** Drop cached notes so the next lookup re-reads Anki. */
+  invalidateCache(): void {
     this.noteCache = null;
   }
 
@@ -49,6 +69,10 @@ export class AnkiConnector {
       if (version < ANKI_CONNECT_VERSION) return { status: 'version-too-old', version };
       return { status: 'ok', version };
     } catch (e: unknown) {
+      if (isTimeoutError(e)) {
+        console.warn('PandaZap: connection test timed out', e);
+        return { status: 'unreachable', detail: `Timed out after ${REQUEST_TIMEOUT_MS} ms.` };
+      }
       if (isNetworkError(e)) return { status: 'unreachable' };
       console.warn('PandaZap: connection test failed', e);
       return { status: 'protocol-error' };
@@ -583,18 +607,23 @@ export class AnkiConnector {
   ): Promise<unknown> {
     const url = this.buildAnkiConnectUrl();
     const body = JSON.stringify({ action, version: ANKI_CONNECT_VERSION, params });
+    const timeoutMessage = `Anki Connect request "${action}" timed out after ${REQUEST_TIMEOUT_MS} ms. Make sure Anki is running with the AnkiConnect addon and that ${url} is reachable.`;
 
     const MAX_RETRIES = 2;
+    const isIdempotent = action !== 'addNote' && action !== 'storeMediaFile';
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await requestUrl({
-          url,
-          method: 'POST',
-          contentType: 'application/json',
-          body,
-          throw: false,
-        });
+        const response = await withTimeout(
+          requestUrl({
+            url,
+            method: 'POST',
+            contentType: 'application/json',
+            body,
+            throw: false,
+          }),
+          timeoutMessage
+        );
 
         if (response.status < 200 || response.status >= 300) {
           throw new Error(`Anki Connect HTTP ${response.status}`);
@@ -614,10 +643,11 @@ export class AnkiConnector {
         }
         return data.result;
       } catch (error: unknown) {
-        const shouldRetry = isNetworkError(error) && attempt < MAX_RETRIES;
+        const shouldRetry =
+          (isNetworkError(error) || isTimeoutError(error)) && isIdempotent && attempt < MAX_RETRIES;
         if (shouldRetry) {
-          const backoff = DEFAULT_TIMEOUT_MS * 0.2 * Math.pow(2, attempt);
-          await this.sleep(backoff + Math.random() * (DEFAULT_TIMEOUT_MS * 0.03));
+          const backoff = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt);
+          await this.sleep(backoff + Math.random() * (RETRY_BACKOFF_BASE_MS * 0.15));
           continue;
         }
         throw error;
@@ -635,8 +665,23 @@ function isNetworkError(error: unknown): boolean {
   );
 }
 
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
 function normalizeField(s: string): string {
   return (s || '').toString().trim();
+}
+
+/** Settings that change which notes a cached deck lookup would return. */
+function cacheKeyFor(settings: PandaZapSettings): string {
+  return [
+    settings.ankiConnectUrl,
+    settings.ankiConnectPort,
+    settings.useNoteBased,
+    settings.defaultDeck,
+    settings.deckOverrideWord,
+  ].join('\0');
 }
 
 function normalizeHtmlField(value: string): string {
