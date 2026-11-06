@@ -8,10 +8,8 @@ export interface AnkiCard {
 
 /** Shape of a single note returned by Anki Connect's notesInfo action */
 export interface AnkiNoteInfo {
-  /** Anki Connect returns a number, older responses and tests may use strings. */
-  noteId: string | number;
-  noteIds?: Array<string | number>;
-  id?: string | number;
+  /** Numeric note ID, as Anki Connect returns it. */
+  noteId: number;
   fields: {
     Front?: { value: string };
     Back?: { value: string };
@@ -58,7 +56,7 @@ export interface AnkiConnectResponse {
 
 /** Cache entry for a single note keyed by its Front field */
 export interface NoteCacheEntry {
-  noteId: string;
+  noteId: number;
   fields: AnkiNoteInfo['fields'];
   raw: AnkiNoteInfo;
 }
@@ -91,7 +89,8 @@ export interface PandaZapSettings {
 export interface CardSyncInfo {
   card: AnkiCard;
   deckName: string;
-  existingCardId?: string;
+  /** Anki note ID to update, or to delete when the card was removed from the note. */
+  existingCardId?: number;
   /** Source note path, set during batch sync to identify which note a card belongs to. */
   notePath?: string;
   /** Deleting this note would discard an edit made directly in Anki. */
@@ -104,6 +103,11 @@ export interface SyncAnalysis {
   cardsToDelete: CardSyncInfo[];
   /** Existing cards skipped because they changed in Anki (overwrite setting off). */
   cardsInConflict: CardSyncInfo[];
+  /**
+   * Number of input cards analysed, not the number of cards that will change.
+   * It is the denominator for progress and the batch summary, so cards already
+   * up to date (which appear in none of the lists above) are still counted.
+   */
   totalCards: number;
 }
 

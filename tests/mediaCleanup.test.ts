@@ -57,7 +57,7 @@ function createPlugin(connector: AnkiConnector): PandaZapPlugin {
   return plugin;
 }
 
-function addNote(state: FakeAnkiState, noteId: string, fields: Record<string, string>): void {
+function addNote(state: FakeAnkiState, noteId: number, fields: Record<string, string>): void {
   const values = Object.fromEntries(
     Object.entries(fields).map(([name, value]) => [name, { value }])
   );
@@ -88,7 +88,7 @@ beforeEach(() => {
 
 describe('referenced media extraction', () => {
   it('collects local image filenames from every field and ignores remote sources', async () => {
-    addNote(anki, '1', {
+    addNote(anki, 1, {
       Front: 'A question',
       Back: '<img src="pandazap_one.png"><br><img src=\'pandazap_two.png\'>',
       Extra:
@@ -106,7 +106,7 @@ describe('referenced media extraction', () => {
   });
 
   it('counts a plugin filename mentioned anywhere in an unparsable field', async () => {
-    addNote(anki, '1', {
+    addNote(anki, 1, {
       Front: 'Q',
       Back: 'broken markup <img src=pandazap_loose.png',
     });
@@ -126,7 +126,7 @@ describe('referenced media extraction', () => {
 
 describe('orphaned media cleanup', () => {
   it('deletes only the media no note references', async () => {
-    addNote(anki, '1', {
+    addNote(anki, 1, {
       Back: '<img src="pandazap_kept.png"><img src="pandazap_also_kept.png">',
     });
     anki.media = ['pandazap_kept.png', 'pandazap_also_kept.png', 'pandazap_old.png'];
@@ -202,7 +202,7 @@ describe('orphaned media cleanup', () => {
   it('keeps a file that only an untagged note references', async () => {
     anki.media = ['pandazap_untagged.png'];
     anki.notes.push({
-      noteId: '9',
+      noteId: 9,
       front: 'Q',
       back: '<img src="pandazap_untagged.png">',
       tags: ['other'],
@@ -249,7 +249,7 @@ describe('orphaned media cleanup', () => {
     confirm.mockImplementation(async () => {
       // Another note gains the file between the first check and deletion.
       anki.notes.push({
-        noteId: '9',
+        noteId: 9,
         front: 'Q',
         back: '<img src="pandazap_old.png">',
         tags: [],

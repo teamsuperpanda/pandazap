@@ -56,7 +56,7 @@ function never() {
   return new Promise<never>(() => {});
 }
 
-function note(noteId: string, front: string, back: string, tags: string[]): AnkiNoteInfo {
+function note(noteId: number, front: string, back: string, tags: string[]): AnkiNoteInfo {
   return {
     noteId,
     fields: { Front: { value: front }, Back: { value: back } },
@@ -150,6 +150,134 @@ describe('AnkiConnector', () => {
     ).rejects.toThrow('lookup failed');
   });
 
+  it('rejects a findNotes result that is not numeric note IDs', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'findNotes') return response(['11']);
+      throw new Error(`Unexpected action: ${action}`);
+    });
+
+    await expect(
+      new AnkiConnector(settings, app).analyzeSyncOperation(
+        [{ question: 'Q', answer: 'A' }],
+        'one.md'
+      )
+    ).rejects.toThrow('Anki returned invalid note IDs');
+  });
+
+  it('rejects notesInfo entries shaped with a string note ID', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'findNotes') return response([11]);
+      if (action === 'notesInfo') {
+        return response([{ noteId: '11', fields: { Front: { value: 'Q' } } }]);
+      }
+      throw new Error(`Unexpected action: ${action}`);
+    });
+
+    await expect(
+      new AnkiConnector(settings, app).analyzeSyncOperation(
+        [{ question: 'Q', answer: 'A' }],
+        'one.md'
+      )
+    ).rejects.toThrow('Anki returned invalid note information');
+  });
+
+  it('rejects an addNote result that is not a note ID', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(1);
+      if (action === 'findNotes') return response([]);
+      if (action === 'addNote') return response(null);
+      throw new Error(`Unexpected action: ${action}`);
+    });
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      [{ question: 'Q', answer: 'A' }],
+      'mine.md',
+      'Q: Q\nA: A'
+    );
+
+    expect(result.cards).toEqual([
+      {
+        card: { question: 'Q', answer: 'A' },
+        status: 'failed',
+        reason: 'Anki returned invalid note ID from addNote',
+      },
+    ]);
+  });
+
+  it('reports a failed deletion when deleteNotes does not return null', async () => {
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const action = parseRequest(options.body).action;
+      if (action === 'version') return response(6);
+      if (action === 'createDeck') return response(1);
+      if (action === 'deleteNotes') return response(true);
+      throw new Error(`Unexpected action: ${action}`);
+    });
+
+    const result = await new AnkiConnector(settings, app).syncCards(
+      [],
+      'mine.md',
+      'Q: Q\nA: A',
+      true,
+      [11]
+    );
+
+    expect(result.deletion).toEqual({
+      deletedCount: 0,
+      failed: true,
+      reason: 'Anki returned invalid delete result',
+    });
+  });
+
+  it('counts analysed input cards, including cards that need no change', async () => {
+    const connector = new AnkiConnector(settings, app);
+    const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
+      'mine.md'
+    );
+
+    requestUrl.mockImplementation(async (options: { body: string }) => {
+      const request = parseRequest(options.body);
+      if (request.action === 'version') return response(6);
+      if (request.action === 'findNotes') {
+        return response(queryOf(request).includes(`tag:${sourceTag}`) ? [] : [11, 22]);
+      }
+      if (request.action === 'notesInfo') {
+        return response([
+          note(11, 'Same', 'A', [sourceTag]),
+          note(22, 'Edited', 'old', [sourceTag, 'pandazap-sync:stale']),
+        ]);
+      }
+      throw new Error(`Unexpected action: ${request.action}`);
+    });
+
+    const analysis = await connector.analyzeSyncOperation(
+      [
+        { question: 'New', answer: 'A' },
+        { question: 'Same', answer: 'A' },
+        { question: 'Edited', answer: 'A' },
+      ],
+      'mine.md'
+    );
+
+    // The up-to-date card appears in no list, but it is still one of the cards
+    // the analysis read and the progress denominator.
+    expect(analysis.cardsToAdd).toHaveLength(1);
+    expect(analysis.cardsToUpdate).toEqual([]);
+    expect(analysis.cardsInConflict).toHaveLength(1);
+    expect(analysis.totalCards).toBe(3);
+    expect(
+      analysis.cardsToAdd.length +
+        analysis.cardsToUpdate.length +
+        analysis.cardsToDelete.length +
+        analysis.cardsInConflict.length
+    ).toBeLessThan(analysis.totalCards);
+  });
+
   it('does not update a matching front owned by another source', async () => {
     const connector = new AnkiConnector(settings, app);
     const otherTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
@@ -159,10 +287,10 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as { action: string };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
-      if (body.action === 'findNotes') return response(['11']);
-      if (body.action === 'notesInfo') return response([note('11', 'Q', 'old', [otherTag])]);
-      if (body.action === 'addNote') return response('22');
+      if (body.action === 'createDeck') return response(1);
+      if (body.action === 'findNotes') return response([11]);
+      if (body.action === 'notesInfo') return response([note(11, 'Q', 'old', [otherTag])]);
+      if (body.action === 'addNote') return response(22);
       throw new Error(`Unexpected action: ${body.action}`);
     });
 
@@ -190,13 +318,13 @@ describe('AnkiConnector', () => {
         params?: { note?: { id?: string } };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
-      if (body.action === 'findNotes') return response(['11', '22']);
+      if (body.action === 'createDeck') return response(1);
+      if (body.action === 'findNotes') return response([11, 22]);
       if (body.action === 'notesInfo') {
-        return response([note('11', 'Q', 'new', [otherTag]), note('22', 'Q', 'old', [sourceTag])]);
+        return response([note(11, 'Q', 'new', [otherTag]), note(22, 'Q', 'old', [sourceTag])]);
       }
       if (body.action === 'updateNoteFields') {
-        expect(body.params?.note?.id).toBe('22');
+        expect(body.params?.note?.id).toBe(22);
         return response(null);
       }
       if (body.action === 'updateNoteTags') return response(null);
@@ -232,9 +360,9 @@ describe('AnkiConnector', () => {
         params?: { note?: number; tags?: string[] };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
-      if (body.action === 'findNotes') return response(['42']);
-      if (body.action === 'notesInfo') return response([note('42', 'Q', 'new', [legacyTag])]);
+      if (body.action === 'createDeck') return response(1);
+      if (body.action === 'findNotes') return response([42]);
+      if (body.action === 'notesInfo') return response([note(42, 'Q', 'new', [legacyTag])]);
       if (body.action === 'updateNoteTags') {
         expect(body.params).toMatchObject({ note: 42 });
         expect(body.params?.tags).toContain(sourceTag);
@@ -271,11 +399,11 @@ describe('AnkiConnector', () => {
         // The broad deck cache can see the sibling note, but source-specific
         // deletion lookup must not claim it.
         return response(
-          body.params?.query === `deck:"${overriddenDeck}" tag:panda-zap` ? ['42'] : []
+          body.params?.query === `deck:"${overriddenDeck}" tag:panda-zap` ? [42] : []
         );
       }
       if (body.action === 'notesInfo') {
-        return response([note('42', 'Sibling question', 'answer', [legacyTag])]);
+        return response([note(42, 'Sibling question', 'answer', [legacyTag])]);
       }
       throw new Error(`Unexpected action: ${body.action}`);
     });
@@ -307,11 +435,11 @@ describe('AnkiConnector', () => {
         params?: { note?: number; tags?: string[]; query?: string };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
+      if (body.action === 'createDeck') return response(1);
       if (body.action === 'findNotes') {
-        return response(body.params?.query?.includes(`tag:${sourceTag}`) ? [] : ['42']);
+        return response(body.params?.query?.includes(`tag:${sourceTag}`) ? [] : [42]);
       }
-      if (body.action === 'notesInfo') return response([note('42', 'Q', 'A', [legacyTag])]);
+      if (body.action === 'notesInfo') return response([note(42, 'Q', 'A', [legacyTag])]);
       if (body.action === 'updateNoteTags') {
         expect(body.params).toMatchObject({ note: 42 });
         expect(body.params?.tags).toContain(sourceTag);
@@ -325,7 +453,7 @@ describe('AnkiConnector', () => {
       path,
       'Deck:: Shared\nQ: Other\nA: answer'
     );
-    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['42']);
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([42]);
 
     const result = await connector.syncCards(
       [{ question: 'Q', answer: 'A' }],
@@ -354,9 +482,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
-      if (request.action === 'findNotes') return response(['11']);
-      if (request.action === 'notesInfo') return response([note('11', 'Q', 'first', [otherTag])]);
-      if (request.action === 'addNote') return response('22');
+      if (request.action === 'findNotes') return response([11]);
+      if (request.action === 'notesInfo') return response([note(11, 'Q', 'first', [otherTag])]);
+      if (request.action === 'addNote') return response(22);
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
@@ -380,12 +508,12 @@ describe('AnkiConnector', () => {
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') {
         const query = queryOf(request);
-        return response(query.includes(`tag:${mineTag}`) ? ['11'] : ['11', '22']);
+        return response(query.includes(`tag:${mineTag}`) ? [11] : [11, 22]);
       }
       if (request.action === 'notesInfo') {
         return response([
-          note('11', 'Removed', 'answer', [mineTag]),
-          note('22', 'Kept', 'answer', [otherTag]),
+          note(11, 'Removed', 'answer', [mineTag]),
+          note(22, 'Kept', 'answer', [otherTag]),
         ]);
       }
       if (request.action === 'deleteNotes') return response(null);
@@ -396,14 +524,14 @@ describe('AnkiConnector', () => {
       [{ question: 'Kept', answer: 'answer' }],
       'mine.md'
     );
-    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([11]);
     expect(requests('findNotes').map((request) => request.params?.query)).toContain(
       `deck:"Default" tag:panda-zap tag:${mineTag}`
     );
 
-    const result = await connector.syncCards([], 'mine.md', undefined, true, ['11']);
+    const result = await connector.syncCards([], 'mine.md', undefined, true, [11]);
     expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
-    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
+    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([[11]]);
   });
 
   it('finds an emptied note by exact source tag after its deck override was removed', async () => {
@@ -418,9 +546,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
-      if (request.action === 'findNotes') return response(['11']);
+      if (request.action === 'findNotes') return response([11]);
       if (request.action === 'notesInfo') {
-        return response([note('11', 'Removed', 'answer', [sourceTag])]);
+        return response([note(11, 'Removed', 'answer', [sourceTag])]);
       }
       if (request.action === 'deleteNotes') return response(null);
       throw new Error(`Unexpected action: ${request.action}`);
@@ -432,11 +560,11 @@ describe('AnkiConnector', () => {
     // One exact-tag lookup: no deck filter and no shared legacy tag.
     expect(queries).toEqual([`tag:panda-zap tag:${sourceTag}`]);
     expect(queries.join(' ')).not.toContain('deck:');
-    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([11]);
 
-    const result = await connector.syncCards([], 'mine.md', 'Nothing left here', true, ['11']);
+    const result = await connector.syncCards([], 'mine.md', 'Nothing left here', true, [11]);
     expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
-    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([['11']]);
+    expect(requests('deleteNotes').map((request) => request.params?.notes)).toEqual([[11]]);
     // A deletion-only sync must not leave an empty deck behind.
     expect(requestUrl.mock.calls.map(actionOf)).not.toContain('createDeck');
   });
@@ -465,7 +593,7 @@ describe('AnkiConnector', () => {
     const sourceTag = (connector as unknown as { getSourceTag(path: string): string }).getSourceTag(
       'mine.md'
     );
-    const confirmedIds = Object.freeze(['11']);
+    const confirmedIds = Object.freeze([11]);
 
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const body = JSON.parse(options.body) as {
@@ -473,11 +601,11 @@ describe('AnkiConnector', () => {
         params?: { query?: string; notes?: string[] };
       };
       if (body.action === 'version') return response(6);
-      if (body.action === 'createDeck') return response(null);
-      if (body.action === 'findNotes') return response(['22']);
-      if (body.action === 'notesInfo') return response([note('22', 'Q', 'A', [sourceTag])]);
+      if (body.action === 'createDeck') return response(1);
+      if (body.action === 'findNotes') return response([22]);
+      if (body.action === 'notesInfo') return response([note(22, 'Q', 'A', [sourceTag])]);
       if (body.action === 'deleteNotes') {
-        expect(body.params?.notes).toEqual(['11']);
+        expect(body.params?.notes).toEqual([11]);
         return response(null);
       }
       throw new Error(`Unexpected action: ${body.action}`);
@@ -493,7 +621,7 @@ describe('AnkiConnector', () => {
 
     expect(result.deletion).toEqual({ deletedCount: 1, failed: false });
     expect(formatSyncResult(result)).toContain('Deleted 1 notes from Anki');
-    expect(confirmedIds).toEqual(['11']);
+    expect(confirmedIds).toEqual([11]);
     expect(requestUrl.mock.calls.filter((call) => actionOf(call) === 'findNotes')).toHaveLength(1);
   });
 
@@ -501,7 +629,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'deleteNotes') return response(null, 'delete failed');
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -511,7 +639,7 @@ describe('AnkiConnector', () => {
       'mine.md',
       'Q: Q\nA: A',
       true,
-      ['11']
+      [11]
     );
 
     expect(result.deletion).toEqual({ deletedCount: 0, failed: true, reason: 'delete failed' });
@@ -527,9 +655,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
-      if (action === 'findNotes') return response(['11']);
-      if (action === 'notesInfo') return response([note('11', 'Q', 'old', [sourceTag])]);
+      if (action === 'createDeck') return response(1);
+      if (action === 'findNotes') return response([11]);
+      if (action === 'notesInfo') return response([note(11, 'Q', 'old', [sourceTag])]);
       if (action === 'updateNoteFields') return response(null, 'update failed');
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -555,7 +683,7 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       throw new Error(`Unexpected action: ${action}`);
     });
 
@@ -593,9 +721,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'findNotes') return response(['11']);
+      if (action === 'findNotes') return response([11]);
       if (action === 'notesInfo') {
-        return response([note('11', 'Q', `A<br><img src="${storedFilename}">`, [sourceTag])]);
+        return response([note(11, 'Q', `A<br><img src="${storedFilename}">`, [sourceTag])]);
       }
       throw new Error(`Unexpected action: ${action}`);
     });
@@ -620,9 +748,9 @@ describe('AnkiConnector', () => {
         // The source-scoped deletion lookup sees nothing to delete here, so the
         // deck cache stays the only notesInfo lookup.
         const query = queryOf(request);
-        return response(query.includes(`tag:${sourceTag}`) ? [] : ['11']);
+        return response(query.includes(`tag:${sourceTag}`) ? [] : [11]);
       }
-      if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
+      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [sourceTag])]);
       if (request.action === 'updateNoteTags') return response(null);
       throw new Error(`Unexpected action: ${request.action}`);
     });
@@ -713,8 +841,8 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
-      if (request.action === 'findNotes') return response(['11']);
-      if (request.action === 'notesInfo') return response([note('11', 'Q', 'A', [sourceTag])]);
+      if (request.action === 'findNotes') return response([11]);
+      if (request.action === 'notesInfo') return response([note(11, 'Q', 'A', [sourceTag])]);
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
@@ -734,7 +862,7 @@ describe('AnkiConnector', () => {
       const request = parseRequest(options.body);
       if (request.action === 'version') return response(6);
       if (request.action === 'findNotes') return response([]);
-      if (request.action === 'addNote') return response('1');
+      if (request.action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${request.action}`);
     });
 
@@ -804,7 +932,7 @@ describe('AnkiConnector', () => {
   it('retries an idempotent read after a timeout', async () => {
     vi.useFakeTimers();
     try {
-      requestUrl.mockImplementationOnce(() => never()).mockResolvedValueOnce(response(['1']));
+      requestUrl.mockImplementationOnce(() => never()).mockResolvedValueOnce(response([1]));
       const connector = new AnkiConnector(settings, app);
       const request = (
         connector as unknown as {
@@ -815,7 +943,7 @@ describe('AnkiConnector', () => {
       await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
       await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_BASE_MS * 2);
 
-      await expect(request).resolves.toEqual(['1']);
+      await expect(request).resolves.toEqual([1]);
       expect(requestUrl).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -826,9 +954,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
-      if (action === 'addNote') return response('1');
+      if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);
     });
     const cards = [1, 2, 3].map((n) => ({ question: `Q${n}`, answer: 'A' }));
@@ -859,9 +987,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
-      if (action === 'addNote') return response('1');
+      if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);
     });
     const cards = [1, 2, 3].map((n) => ({ question: `Q${n}`, answer: 'A' }));
@@ -890,9 +1018,9 @@ describe('AnkiConnector', () => {
     requestUrl.mockImplementation(async (options: { body: string }) => {
       const action = parseRequest(options.body).action;
       if (action === 'version') return response(6);
-      if (action === 'createDeck') return response(null);
+      if (action === 'createDeck') return response(1);
       if (action === 'findNotes') return response([]);
-      if (action === 'addNote') return response('1');
+      if (action === 'addNote') return response(1);
       throw new Error(`Unexpected action: ${action}`);
     });
     const abort = { cancelled: false };
@@ -903,7 +1031,7 @@ describe('AnkiConnector', () => {
       'mine.md',
       'Q: Q\nA: A',
       true,
-      ['11'],
+      [11],
       false,
       {
         abort,

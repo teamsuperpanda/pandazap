@@ -53,7 +53,7 @@ function analysis(overrides: Partial<SyncAnalysis> = {}): SyncAnalysis {
   };
 }
 
-function deletion(id: string, notePath?: string, externallyEdited = false): CardSyncInfo {
+function deletion(id: number, notePath?: string, externallyEdited = false): CardSyncInfo {
   return {
     card: { question: 'Removed question', answer: 'Removed answer' },
     deckName: 'Default',
@@ -94,7 +94,7 @@ describe('SyncModal deletion handling', () => {
 
   it('confirms and deletes the cards of a note that was emptied', async () => {
     const context = createSyncContext([], 'mine.md', 'Nothing left here');
-    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion('11')] }), analysis());
+    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion(11)] }), analysis());
     const modal = createModal(plugin);
     const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
 
@@ -104,7 +104,7 @@ describe('SyncModal deletion handling', () => {
     expect(plugin.syncCardsToAnki).toHaveBeenCalledWith(
       true,
       context,
-      ['11'],
+      [11],
       // The casts are type-only: expect.objectContaining returns any, which the
       // nested-matcher rule rejects inside objectContaining's generic parameter.
       expect.objectContaining({
@@ -131,7 +131,7 @@ describe('SyncModal deletion handling', () => {
     const context = createSyncContext([], 'mine.md', 'Nothing left here');
     const plugin = pluginStub(
       context,
-      analysis({ cardsToDelete: [deletion('11', undefined, true)] }),
+      analysis({ cardsToDelete: [deletion(11, undefined, true)] }),
       analysis()
     );
     const modal = createModal(plugin);
@@ -144,7 +144,7 @@ describe('SyncModal deletion handling', () => {
 
   it('aborts without syncing when the deletion is not confirmed', async () => {
     const context = createSyncContext([], 'mine.md', '');
-    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion('11')] }), analysis());
+    const plugin = pluginStub(context, analysis({ cardsToDelete: [deletion(11)] }), analysis());
     const modal = createModal(plugin);
     vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(false);
 
@@ -160,7 +160,7 @@ describe('SyncModal deletion handling', () => {
     const plugin = pluginStub(
       createSyncContext([]),
       analysis(),
-      analysis({ cardsToDelete: [deletion('11', 'one.md')] })
+      analysis({ cardsToDelete: [deletion(11, 'one.md')] })
     );
     const modal = createModal(plugin, batchContext);
     const confirm = vi.spyOn(modal, 'showDeleteConfirmation').mockResolvedValue(true);
@@ -174,7 +174,7 @@ describe('SyncModal deletion handling', () => {
       ReadonlyMap<string, readonly string[]>,
     ];
     expect(deleteConfirmed).toBe(true);
-    expect([...idsByNote.entries()]).toEqual([['one.md', ['11']]]);
+    expect([...idsByNote.entries()]).toEqual([['one.md', [11]]]);
   });
 
   it('does not sync a selected batch with no cards and no deletions', async () => {

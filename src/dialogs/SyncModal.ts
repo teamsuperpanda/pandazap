@@ -404,7 +404,7 @@ export class SyncModal extends Modal {
     // If there are deletions detected, ask the user to confirm before proceeding.
     // If the user cancels, close the modal and abort the sync entirely.
     let deleteConfirmed = false;
-    let confirmedDeletionIds: readonly string[] | undefined;
+    let confirmedDeletionIds: readonly number[] | undefined;
     if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
       const userConfirmed = await this.showDeleteConfirmation(
         this.syncAnalysis.cardsToDelete.length,
@@ -420,7 +420,7 @@ export class SyncModal extends Modal {
       confirmedDeletionIds = Object.freeze(
         this.syncAnalysis.cardsToDelete
           .map((card) => card.existingCardId)
-          .filter((id): id is string => Boolean(id))
+          .filter((id): id is number => id !== undefined)
       );
     }
 
@@ -454,7 +454,7 @@ export class SyncModal extends Modal {
 
     // Handle deletions per-note
     let deleteConfirmed = false;
-    let confirmedDeletionIdsByNote: Map<string, readonly string[]> | undefined;
+    let confirmedDeletionIdsByNote: Map<string, readonly number[]> | undefined;
     if (this.syncAnalysis && this.syncAnalysis.cardsToDelete.length > 0) {
       const noteCount = new Set(
         this.syncAnalysis.cardsToDelete
@@ -472,9 +472,9 @@ export class SyncModal extends Modal {
       }
       deleteConfirmed = true;
       // Build per-note deletion ID map
-      const byNote = new Map<string, string[]>();
+      const byNote = new Map<string, number[]>();
       for (const cd of this.syncAnalysis.cardsToDelete) {
-        if (cd.notePath && cd.existingCardId) {
+        if (cd.notePath && cd.existingCardId !== undefined) {
           const list = byNote.get(cd.notePath) ?? [];
           list.push(cd.existingCardId);
           byNote.set(cd.notePath, list);
@@ -629,7 +629,7 @@ export class SyncModal extends Modal {
       const deletedList = deletedSection.createDiv('panda-zap-results-list');
       this.syncAnalysis.cardsToDelete.forEach((cd) => {
         const item = deletedList.createDiv('panda-zap-result-item');
-        const id = cd.existingCardId || 'unknown-id';
+        const id = cd.existingCardId ?? 'unknown-id';
         const q = cd.card && cd.card.question ? cd.card.question : '<no question>';
         item.createSpan({ text: `Deleted: ${q} (id: ${id})` });
       });

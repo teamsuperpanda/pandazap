@@ -5,7 +5,7 @@
  */
 
 export interface FakeNote {
-  noteId: string;
+  noteId: number;
   front: string;
   back: string;
   tags: string[];
@@ -94,7 +94,7 @@ export function installFakeAnki(
     };
     state.requests.push(request);
     if (state.failActions.has(request.action)) throw new Error(`${request.action} failed`);
-    const nextNoteId = Math.max(0, ...state.notes.map((note) => Number(note.noteId) || 0)) + 1;
+    const nextNoteId = Math.max(0, ...state.notes.map((note) => note.noteId)) + 1;
     const nextCardId = Math.max(0, ...state.cards.map((card) => card.cardId)) + 1;
 
     switch (request.action) {
@@ -125,17 +125,17 @@ export function installFakeAnki(
             .filter((note) => tags.every((tag) => note.tags.includes(tag)))
             .filter((note) => quoted.every((text) => noteText(note).includes(text)))
             .filter((note) => !deck || decksOf(state, note).some((name) => isInDeck(name, deck)))
-            .map((note) => Number(note.noteId))
+            .map((note) => note.noteId)
         );
       }
       case 'notesInfo': {
-        const ids = ((request.params?.notes as unknown[]) ?? []).map(String);
+        const ids = ((request.params?.notes as unknown[]) ?? []).map(Number);
         return ok(
           state.notes
             .filter((note) => ids.includes(note.noteId))
             .map((note) => ({
               // Real Anki Connect returns note IDs as numbers.
-              noteId: Number(note.noteId),
+              noteId: note.noteId,
               fields: note.fields ?? {
                 Front: { value: note.front },
                 Back: { value: note.back },
@@ -151,7 +151,7 @@ export function installFakeAnki(
       }
       case 'updateNoteTags': {
         const note = state.notes.find(
-          (entry) => entry.noteId === stringParam(request.params, 'note')
+          (entry) => entry.noteId === Number(stringParam(request.params, 'note'))
         );
         if (note) note.tags = [...((request.params?.tags as string[]) ?? [])];
         return ok(null);
@@ -175,7 +175,7 @@ export function installFakeAnki(
         return ok(null);
       }
       case 'createDeck':
-        return ok(null);
+        return ok(1);
       case 'addNote': {
         const note = request.params?.note as
           | {
@@ -186,7 +186,7 @@ export function installFakeAnki(
           | undefined;
         const fields = note?.fields ?? {};
         const created: FakeNote = {
-          noteId: String(nextNoteId),
+          noteId: nextNoteId,
           front: fields.Front ?? '',
           back: fields.Back ?? '',
           tags: [...(note?.tags ?? [])],
@@ -202,8 +202,8 @@ export function installFakeAnki(
       }
       case 'updateNoteFields': {
         const params = request.params?.note as
-          { id?: string | number; fields?: Record<string, string> } | undefined;
-        const note = state.notes.find((entry) => entry.noteId === String(params?.id));
+          { id?: number; fields?: Record<string, string> } | undefined;
+        const note = state.notes.find((entry) => entry.noteId === params?.id);
         if (note && params?.fields) {
           for (const [name, value] of Object.entries(params.fields)) {
             // Keep both views of the note in step: fields for notesInfo and

@@ -150,17 +150,9 @@ describe('batch sync of an emptied note', () => {
       new Map([['one.md', createSyncContext([], 'one.md', '')]])
     );
 
-    await plugin.syncBatchCards(bContext, true, new Map([['one.md', ['11']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['one.md', [11]]]));
 
-    expect(connector.syncCards).toHaveBeenCalledWith(
-      [],
-      'one.md',
-      '',
-      true,
-      ['11'],
-      true,
-      undefined
-    );
+    expect(connector.syncCards).toHaveBeenCalledWith([], 'one.md', '', true, [11], true, undefined);
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
   });
 
@@ -174,7 +166,7 @@ describe('batch sync of an emptied note', () => {
       ])
     );
 
-    await plugin.syncBatchCards(bContext, true, new Map([['two.md', ['22']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['two.md', [22]]]));
 
     expect(connector.syncCards).toHaveBeenNthCalledWith(
       1,
@@ -192,7 +184,7 @@ describe('batch sync of an emptied note', () => {
       'two.md',
       '',
       true,
-      ['22'],
+      [22],
       true,
       undefined
     );
@@ -209,14 +201,14 @@ describe('batch sync of an emptied note', () => {
       if (request.action === 'version') return { status: 200, json: { result: 6, error: null } };
       // Anything else would mean the connector re-analysed an unconfirmed note.
       if (request.action === 'findNotes')
-        return { status: 200, json: { result: ['11'], error: null } };
+        return { status: 200, json: { result: [11], error: null } };
       if (request.action === 'notesInfo') {
         return {
           status: 200,
           json: {
             result: [
               {
-                noteId: '11',
+                noteId: 11,
                 fields: { Front: { value: 'Stale' }, Back: { value: 'answer' } },
                 tags: [sourceTag],
               },
@@ -237,7 +229,7 @@ describe('batch sync of an emptied note', () => {
     );
 
     // The map only confirms deletions for another note.
-    await plugin.syncBatchCards(bContext, true, new Map([['other.md', ['99']]]));
+    await plugin.syncBatchCards(bContext, true, new Map([['other.md', [99]]]));
 
     const actions = requestUrl.mock.calls.map(
       (call) => (JSON.parse((call[0] as { body: string }).body) as { action: string }).action

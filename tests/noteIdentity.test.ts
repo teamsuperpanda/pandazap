@@ -172,12 +172,12 @@ function legacyTagOf(plugin: PandaZapPlugin, path: string): string {
 
 function addAnkiNote(
   state: FakeAnkiState,
-  noteId: string,
+  noteId: number,
   tags: string[],
   deckName: string,
   front = 'Q'
 ): void {
-  const cardId = Number(noteId);
+  const cardId = noteId;
   state.notes.push({ noteId, front, back: 'A', tags, cards: [cardId] });
   state.cards.push({ cardId, note: cardId, deckName });
 }
@@ -201,7 +201,7 @@ describe('note rename migration', () => {
     const plugin = await loadPlugin(harness);
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
     const newTag = sourceTagOf(plugin, 'folder/renamed.md');
-    addAnkiNote(anki, '11', ['panda-zap', 'obsidian', oldTag, 'keep-me'], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', 'obsidian', oldTag, 'keep-me'], 'Default');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
@@ -220,7 +220,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', oldTag], 'folder::note');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'folder::note');
 
     await renameTo(harness, plugin, 'folder/note.md', 'other/renamed.md', 'Q: Q\nA: A');
 
@@ -234,7 +234,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'Default');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
@@ -256,7 +256,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'Default');
     anki.failActions.add('findNotes');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
@@ -297,7 +297,7 @@ describe('note rename migration', () => {
       harness.app as never
     ) as unknown as { getSourceTag(p: string): string };
     const oldTag = tagHelper.getSourceTag('folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', oldTag], 'folder::note');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'folder::note');
 
     const plugin = await loadPlugin(harness);
 
@@ -324,7 +324,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const firstTag = sourceTagOf(plugin, 'folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', firstTag], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', firstTag], 'Default');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/step.md', 'Q: Q\nA: A');
     await renameTo(harness, plugin, 'folder/step.md', 'folder/final.md', 'Q: Q\nA: A');
@@ -339,7 +339,7 @@ describe('note rename migration', () => {
   it('never migrates the same rename twice', async () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
-    addAnkiNote(anki, '11', ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Default');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
     const tagsAfterFirstRun = [...anki.notes[0].tags];
@@ -359,7 +359,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'folder/note.md': 'Deck::Spanish\n\nQ: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const oldTag = sourceTagOf(plugin, 'folder/note.md');
-    addAnkiNote(anki, '11', ['panda-zap', oldTag], 'Spanish');
+    addAnkiNote(anki, 11, ['panda-zap', oldTag], 'Spanish');
 
     await renameTo(
       harness,
@@ -377,7 +377,7 @@ describe('note rename migration', () => {
   it('does not pull back a card the user moved to another deck', async () => {
     const harness = createHarness({ 'folder/note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
-    addAnkiNote(anki, '11', ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Custom');
+    addAnkiNote(anki, 11, ['panda-zap', sourceTagOf(plugin, 'folder/note.md')], 'Custom');
 
     await renameTo(harness, plugin, 'folder/note.md', 'folder/renamed.md', 'Q: Q\nA: A');
 
@@ -390,7 +390,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'note.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const legacyOldTag = legacyTagOf(plugin, 'note.md');
-    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], 'note');
+    addAnkiNote(anki, 11, ['panda-zap', legacyOldTag], 'note');
 
     await renameTo(harness, plugin, 'note.md', 'renamed.md', 'Q: Q\nA: A');
 
@@ -409,7 +409,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ [xPath]: content });
     const plugin = await loadPlugin(harness);
     const legacyOldTag = legacyTagOf(plugin, xPath);
-    addAnkiNote(anki, '11', ['panda-zap', legacyOldTag], 'Shared', 'X question');
+    addAnkiNote(anki, 11, ['panda-zap', legacyOldTag], 'Shared', 'X question');
 
     await renameTo(harness, plugin, xPath, 'z.md', content);
 
@@ -433,14 +433,14 @@ describe('note rename migration', () => {
     const siblingHashedTag = sourceTagOf(plugin, yPath);
     addAnkiNote(
       anki,
-      '11',
+      11,
       ['panda-zap', sourceTagOf(plugin, xPath), legacyOldTag],
       `${deepFolder}::x`,
       'X question'
     );
     addAnkiNote(
       anki,
-      '12',
+      12,
       ['panda-zap', siblingHashedTag, legacyOldTag],
       `${deepFolder}::x`,
       'X question'
@@ -448,8 +448,8 @@ describe('note rename migration', () => {
 
     await renameTo(harness, plugin, xPath, 'z.md', xContent);
 
-    const ownNote = anki.notes.find((note) => note.noteId === '11');
-    const siblingNote = anki.notes.find((note) => note.noteId === '12');
+    const ownNote = anki.notes.find((note) => note.noteId === 11);
+    const siblingNote = anki.notes.find((note) => note.noteId === 12);
     expect(ownNote?.tags).toContain(sourceTagOf(plugin, 'z.md'));
     expect(ownNote?.tags).not.toContain(legacyOldTag);
     expect(siblingNote?.tags).toEqual(['panda-zap', siblingHashedTag, legacyOldTag]);
@@ -457,7 +457,7 @@ describe('note rename migration', () => {
     expect(notices).toEqual([]);
 
     const analysis = await connectorOf(plugin).analyzeSyncOperation([], 'z.md', '');
-    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([11]);
   });
 
   it('does not retag a legacy sibling that shares the Front of the renamed note', async () => {
@@ -471,13 +471,13 @@ describe('note rename migration', () => {
     const oldDeck = `${deepFolder}::x`;
     // The note's own note holds both tags; the sibling is legacy-only and asks
     // the same question, so ownership is genuinely ambiguous.
-    addAnkiNote(anki, '11', ['panda-zap', hashedOldTag, legacyOldTag], oldDeck, 'X question');
-    addAnkiNote(anki, '12', ['panda-zap', legacyOldTag], oldDeck, 'X question');
+    addAnkiNote(anki, 11, ['panda-zap', hashedOldTag, legacyOldTag], oldDeck, 'X question');
+    addAnkiNote(anki, 12, ['panda-zap', legacyOldTag], oldDeck, 'X question');
 
     await renameTo(harness, plugin, xPath, 'z.md', xContent);
 
-    const ownNote = anki.notes.find((note) => note.noteId === '11');
-    const siblingNote = anki.notes.find((note) => note.noteId === '12');
+    const ownNote = anki.notes.find((note) => note.noteId === 11);
+    const siblingNote = anki.notes.find((note) => note.noteId === 12);
     expect(ownNote?.tags).toContain(sourceTagOf(plugin, 'z.md'));
     expect(ownNote?.tags).not.toContain(legacyOldTag);
     expect(ownNote?.tags).not.toContain(hashedOldTag);
@@ -485,7 +485,7 @@ describe('note rename migration', () => {
     expect(plugin.settings.pendingTagMigrations).toEqual([]);
 
     const analysis = await connectorOf(plugin).analyzeSyncOperation([], 'z.md', '');
-    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual(['11']);
+    expect(analysis.cardsToDelete.map((card) => card.existingCardId)).toEqual([11]);
   });
 
   it('migrates the hashed notes and warns when legacy cards stay unresolved', async () => {
@@ -497,12 +497,12 @@ describe('note rename migration', () => {
     const legacyOldTag = legacyTagOf(plugin, xPath);
     addAnkiNote(
       anki,
-      '11',
+      11,
       ['panda-zap', sourceTagOf(plugin, xPath), legacyOldTag],
       `${deepFolder}::x`,
       'New question'
     );
-    addAnkiNote(anki, '12', ['panda-zap', legacyOldTag], `${deepFolder}::x`, 'Old question');
+    addAnkiNote(anki, 12, ['panda-zap', legacyOldTag], `${deepFolder}::x`, 'Old question');
 
     await renameTo(harness, plugin, xPath, 'z.md', xContent);
 
@@ -548,8 +548,8 @@ describe('note rename migration', () => {
     const plugin = await loadPlugin(harness);
     const tagA = sourceTagOf(plugin, 'a/old.md');
     const tagB = sourceTagOf(plugin, 'b/old.md');
-    addAnkiNote(anki, '11', ['panda-zap', tagA], 'Default');
-    addAnkiNote(anki, '12', ['panda-zap', tagB], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', tagA], 'Default');
+    addAnkiNote(anki, 12, ['panda-zap', tagB], 'Default');
     plugin.settings.pendingTagMigrations = [
       { fromPath: 'a/old.md', toPath: 'a/new.md' },
       { fromPath: 'b/old.md', toPath: 'b/new.md' },
@@ -579,7 +579,7 @@ describe('note rename migration', () => {
     const harness = createHarness({ 'a/step.md': 'Q: Q\nA: A', 'a/final.md': 'Q: Q\nA: A' });
     const plugin = await loadPlugin(harness);
     const tagA = sourceTagOf(plugin, 'a/start.md');
-    addAnkiNote(anki, '11', ['panda-zap', tagA], 'Default');
+    addAnkiNote(anki, 11, ['panda-zap', tagA], 'Default');
     plugin.settings.pendingTagMigrations = [
       { fromPath: 'a/start.md', toPath: 'a/step.md' },
       { fromPath: 'a/step.md', toPath: 'a/final.md' },
