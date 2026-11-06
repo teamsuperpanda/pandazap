@@ -6,6 +6,7 @@ import {
   normalizeSettings,
   parseAnkiConnectUrl,
   parsePort,
+  validateDeckName,
   validateDeckOverrideWord,
   validateMarkerWord,
 } from '../src/settings';
@@ -248,6 +249,20 @@ describe('validateDeckOverrideWord', () => {
     expect(validateDeckOverrideWord('')).not.toBeNull();
     expect(validateDeckOverrideWord('   ')).not.toBeNull();
     expect(validateDeckOverrideWord('Deck\r\nOther')).not.toBeNull();
+  });
+});
+
+describe('validateDeckName', () => {
+  it('allows nested deck names and other text', () => {
+    for (const name of ['Default', 'Languages::Spanish', 'My Deck']) {
+      expect(validateDeckName(name), name).toBeNull();
+    }
+  });
+
+  it('rejects empty and multi-line values', () => {
+    expect(validateDeckName('')).not.toBeNull();
+    expect(validateDeckName('   ')).not.toBeNull();
+    expect(validateDeckName('Deck\r\nOther')).not.toBeNull();
   });
 });
 

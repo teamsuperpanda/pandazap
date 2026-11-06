@@ -57,7 +57,9 @@ export default class PandaZapPlugin extends Plugin {
       name: 'Sync all notes to Anki',
       callback: () => {
         const paths = this.app.vault.getMarkdownFiles().map((f) => f.path);
-        void this.openBatchSyncDialog(paths);
+        // An untouched note with no cards can only be skipped here: checking
+        // every empty note against Anki would mean one lookup per note.
+        void this.openBatchSyncDialog(paths, false);
       },
     });
 
@@ -72,8 +74,8 @@ export default class PandaZapPlugin extends Plugin {
     new SyncModal(this.app, this).open();
   }
 
-  async openBatchSyncDialog(notePaths: string[]): Promise<void> {
-    const bContext = await this.captureBatchSyncContext(notePaths);
+  async openBatchSyncDialog(notePaths: string[], includeEmptyNotes = true): Promise<void> {
+    const bContext = await this.captureBatchSyncContext(notePaths, includeEmptyNotes);
     if (bContext.contexts.size === 0) {
       new Notice('No Markdown notes with cards found');
       return;
@@ -158,14 +160,18 @@ export default class PandaZapPlugin extends Plugin {
     return createSyncContext(cards, notePath, noteContent);
   }
 
-  async captureBatchSyncContext(notePaths: string[]): Promise<BatchSyncContext> {
+  async captureBatchSyncContext(
+    notePaths: string[],
+    includeEmptyNotes = true
+  ): Promise<BatchSyncContext> {
     const captured = await Promise.all(
       notePaths.map(async (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile)) return null;
         const content = await this.app.vault.read(file);
         const cards = extractQACardsFromText(content, this.settings);
-        return cards.length > 0 ? createSyncContext(cards, path, content) : null;
+        if (cards.length === 0 && !includeEmptyNotes) return null;
+        return createSyncContext(cards, path, content);
       })
     );
     const contexts = new Map<string, SyncContext>();

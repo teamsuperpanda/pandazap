@@ -16,6 +16,7 @@ import {
   createSyncContext,
   type PandaZapSettings,
 } from '../src/sync/types';
+import { TFile } from 'obsidian';
 
 function connectorStub() {
   return {
@@ -26,14 +27,37 @@ function connectorStub() {
   };
 }
 
-function createPlugin(connector: ReturnType<typeof connectorStub>): PandaZapPlugin {
+function createPlugin(
+  connector: ReturnType<typeof connectorStub>,
+  notes: Record<string, string> = {}
+): PandaZapPlugin {
   const plugin = Object.create(PandaZapPlugin.prototype) as PandaZapPlugin;
+  const files = new Map(
+    Object.entries(notes).map(([path, content]) => [path, { content, file: new TFile() }])
+  );
   const internals = plugin as unknown as {
     settings: PandaZapSettings;
     ankiConnector: ReturnType<typeof connectorStub>;
+    app: {
+      vault: {
+        getAbstractFileByPath: (path: string) => unknown;
+        read: (file: TFile) => Promise<string>;
+      };
+    };
   };
   internals.settings = DEFAULT_SETTINGS;
   internals.ankiConnector = connector;
+  internals.app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => files.get(path)?.file ?? null,
+      read: async (file: TFile) => {
+        for (const entry of files.values()) {
+          if (entry.file === file) return entry.content;
+        }
+        return '';
+      },
+    },
+  };
   return plugin;
 }
 
@@ -94,5 +118,43 @@ describe('plugin sync cache invalidation', () => {
       )
     ).rejects.toThrow('sync failed');
     expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('batch sync of an emptied note', () => {
+  it('sends the empty card list and its confirmed deletion IDs to the connector', async () => {
+    const connector = connectorStub();
+    const plugin = createPlugin(connector);
+    const bContext = createBatchSyncContext(
+      new Map([['one.md', createSyncContext([], 'one.md', '')]])
+    );
+
+    await plugin.syncBatchCards(bContext, false, true, new Map([['one.md', ['11']]]));
+
+    expect(connector.syncCards).toHaveBeenCalledWith([], false, 'one.md', '', true, ['11'], true);
+    expect(connector.invalidateCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('batch capture of empty notes', () => {
+  const notes = { 'empty.md': '# Nothing to sync', 'cards.md': 'Q: Q\nA: A' };
+
+  it('keeps a selected note that has no cards so it can clean up', async () => {
+    const plugin = createPlugin(connectorStub(), notes);
+
+    const bContext = await plugin.captureBatchSyncContext(['empty.md', 'cards.md']);
+
+    expect([...bContext.contexts.keys()]).toEqual(['empty.md', 'cards.md']);
+    expect(bContext.contexts.get('empty.md')?.cards).toEqual([]);
+    expect(bContext.totalCards).toBe(1);
+  });
+
+  it('skips a note with no cards for sync-all', async () => {
+    const plugin = createPlugin(connectorStub(), notes);
+
+    const bContext = await plugin.captureBatchSyncContext(['empty.md', 'cards.md'], false);
+
+    expect([...bContext.contexts.keys()]).toEqual(['cards.md']);
+    expect(bContext.totalCards).toBe(1);
   });
 });

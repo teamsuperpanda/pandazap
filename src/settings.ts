@@ -135,6 +135,13 @@ export function validateDeckOverrideWord(word: string): string | null {
   return null;
 }
 
+/** Returns a user-facing error for a target deck name, else null. */
+export function validateDeckName(name: string): string | null {
+  if (!name.trim()) return 'Deck name cannot be empty.';
+  if (/[\r\n]/.test(name)) return 'Deck name cannot contain a line break.';
+  return null;
+}
+
 /** Parses a port typed into the settings UI; null when it is not 1-65535. */
 export function parsePort(value: string): number | null {
   const trimmed = value.trim();

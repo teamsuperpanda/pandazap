@@ -21,8 +21,8 @@ Keep Anki running and reachable at this address while syncing.
 ### Decking and targeting
 
 - **Default Deck**
-  - The fallback Anki deck to use when the plugin cannot determine a note-based deck or no `Deck::` override is present (default: `Default`).
-  - There is currently no settings UI control for this. To change it, edit the `defaultDeck` field in the plugin's `data.json` with the plugin disabled.
+  - The Anki deck used for all cards when note-based deck organization is off, and the fallback when no `Deck::` override is present (default: `Default`).
+  - Set it in the plugin settings. An empty value is rejected in the settings UI and falls back to `Default` when read from a corrupt `data.json`.
 
 - **Use Note-Based Decks**
   - When enabled, Panda Zap will create or map Anki decks based on the note path in your vault (folder::NoteName). If disabled the plugin uses the configured Default Deck for all created notes.
