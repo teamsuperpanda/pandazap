@@ -67,7 +67,9 @@ It was created by Facebook`;
 
   it('should return empty array for invalid input', () => {
     expect(extractQACardsFromText('No Q&A here', defaultSettings)).toEqual([]);
-    expect(extractQACardsFromText('Q: just a question with nothing after', defaultSettings)).toEqual([]);
+    expect(
+      extractQACardsFromText('Q: just a question with nothing after', defaultSettings)
+    ).toEqual([]);
   });
 
   it('should capture bullet points after Q: without explicit A:', () => {
@@ -94,7 +96,9 @@ It was created by Facebook`;
 
     expect(cards).toHaveLength(1);
     expect(cards[0].question).toBe('Conversion rates');
-    expect(cards[0].answer).toBe('| From | To | Rate |\n| --- | --- | --- |\n| USD | EUR | 0.85 |\n| EUR | USD | 1.18 |');
+    expect(cards[0].answer).toBe(
+      '| From | To | Rate |\n| --- | --- | --- |\n| USD | EUR | 0.85 |\n| EUR | USD | 1.18 |'
+    );
   });
 
   it('should handle bullet points with explicit A: on same Q: line', () => {
