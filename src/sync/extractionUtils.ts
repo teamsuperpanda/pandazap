@@ -74,15 +74,49 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
   const aLabelAtEnd = new RegExp(`\\s+${rx.aMarker}\\s*$`, 'i');
   const iLabelAtEnd = new RegExp(`\\s+${rx.iMarker}\\s*$`, 'i');
   const openingFencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+  const htmlCommentPattern = /^ {0,3}<!--/;
+  const listItemPattern = /^(\s*)([-*+]|\d{1,9}[.)])\s+/;
 
-  const lineState: Array<'normal' | 'frontmatter' | 'fenced'> = [];
+  const leadingIndent = (line: string): number => {
+    let width = 0;
+    for (const char of line) {
+      if (char === ' ') width += 1;
+      else if (char === '\t') width += 4;
+      else break;
+    }
+    return width;
+  };
+
+  const columnAfter = (text: string, startColumn = 0): number => {
+    let column = startColumn;
+    for (const char of text) {
+      column = char === '\t' ? column + 4 - (column % 4) : column + 1;
+    }
+    return column;
+  };
+
+  // Line-state pass. Only 'normal' lines are parsed as cards. Fences win over
+  // indented code, which wins over HTML comments. Indented code follows the
+  // CommonMark list shape: open list items are tracked by content column, blank
+  // lines keep them open, and a non-blank line indented less than the innermost
+  // content column closes items. Code starts at 4+ columns past the innermost
+  // content column (or 4+ at top level) after a blank line or at file start.
+  // Known limits: leading indentation counts a tab as 4 columns (list content
+  // columns use tab stops), list markers inside paragraphs are still tracked,
+  // and only comment openers at 0-3 spaces are recognised.
+  const lineState: Array<'normal' | 'frontmatter' | 'fenced' | 'comment' | 'code'> = [];
+  const listContentColumns: number[] = [];
   let inFrontmatter = false;
+  let inComment = false;
+  let inIndentedCode = false;
+  let codeIndent = 4;
   let fenceCharacter: '`' | '~' | null = null;
   let fenceLength: number;
   let closingFence: RegExp | null = null;
 
   for (let k = 0; k < lines.length; k++) {
     const trimmed = lines[k].trim();
+    const indent = leadingIndent(lines[k]);
 
     if (k === 0 && trimmed === '---') {
       inFrontmatter = true;
@@ -107,6 +141,34 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       continue;
     }
 
+    if (inIndentedCode) {
+      if (trimmed === '' || indent >= codeIndent) {
+        lineState.push('code');
+        continue;
+      }
+      inIndentedCode = false;
+    }
+
+    if (inComment) {
+      lineState.push('comment');
+      if (lines[k].includes('-->')) {
+        inComment = false;
+      }
+      continue;
+    }
+
+    if (trimmed !== '') {
+      while (
+        listContentColumns.length > 0 &&
+        indent < listContentColumns[listContentColumns.length - 1]
+      ) {
+        listContentColumns.pop();
+      }
+    }
+
+    const codeThreshold =
+      (listContentColumns.length > 0 ? listContentColumns[listContentColumns.length - 1] : 0) + 4;
+
     const openingFence = lines[k].match(openingFencePattern);
     if (openingFence && (openingFence[1][0] === '~' || !openingFence[2].includes('`'))) {
       fenceCharacter = openingFence[1][0] as '`' | '~';
@@ -116,6 +178,29 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
       );
       lineState.push('fenced');
       continue;
+    }
+
+    if (htmlCommentPattern.test(lines[k])) {
+      lineState.push('comment');
+      if (lines[k].indexOf('-->', lines[k].indexOf('<!--') + 4) === -1) {
+        inComment = true;
+      }
+      continue;
+    }
+
+    if ((k === 0 || lines[k - 1].trim() === '') && indent >= codeThreshold) {
+      inIndentedCode = true;
+      codeIndent = codeThreshold;
+      lineState.push('code');
+      continue;
+    }
+
+    const listItem = lines[k].match(listItemPattern);
+    if (listItem) {
+      const markerEnd = columnAfter(listItem[1] + listItem[2]);
+      const gap = listItem[0].slice(listItem[1].length + listItem[2].length);
+      const gapWidth = columnAfter(gap, markerEnd) - markerEnd;
+      listContentColumns.push(gapWidth > 4 ? markerEnd + 1 : markerEnd + gapWidth);
     }
 
     lineState.push('normal');
@@ -177,6 +262,10 @@ export function extractQACardsFromText(content: string, settings: PandaZapSettin
           const nextLine = lines[j];
 
           if (nextLine.trim() === '') break;
+          if (lineState[j] === 'comment') {
+            j++;
+            continue;
+          }
           if (rx.qStart.test(nextLine)) break;
           if (lineState[j] !== 'normal') break;
 

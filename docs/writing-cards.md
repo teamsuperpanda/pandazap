@@ -245,7 +245,7 @@ Q: This will NOT be detected A: It is inside a code block
 More text...
 ```
 
-Cards inside fenced code blocks or YAML frontmatter are not extracted.
+Cards inside fenced code blocks, indented code blocks, YAML frontmatter or HTML comments are not extracted. An HTML comment that is never closed with `-->` hides the rest of the note. A fenced code block indented four or more spaces inside a list item is still extracted.
 
 ### Do not leave Q: empty
 
