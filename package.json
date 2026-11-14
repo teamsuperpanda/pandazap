@@ -11,7 +11,7 @@
   "homepage": "https://github.com/teamsuperpanda/pandazap",
   "license": "MIT",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.22.2"
   },
   "scripts": {
     "build": "node esbuild.config.mjs production",
